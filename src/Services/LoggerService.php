@@ -100,11 +100,13 @@ class LoggerService
         // Attempt Kafka broker publication if Kafka library is present
         if (class_exists('\Junges\Kafka\Facades\Kafka') && config('kafka-logger.produce_to_kafka', true)) {
             try {
-                \Junges\Kafka\Facades\Kafka::publishOn($formattedTopic)
-                    ->withBody(json_encode($payload))
+                $producer = method_exists('\Junges\Kafka\Facades\Kafka', 'publishOn')
+                    ? \Junges\Kafka\Facades\Kafka::publishOn($formattedTopic)
+                    : \Junges\Kafka\Facades\Kafka::publish()->onTopic($formattedTopic);
+                $producer->withBody(json_encode($payload))
                     ->withHeaders([
                         'x-trace-id' => $traceId,
-                        'x-log-id' => $logId,
+                        'x-log-id'   => $logId,
                     ])
                     ->send();
             } catch (\Throwable $e) {
