@@ -1,0 +1,14 @@
+/vendor/
+composer.lock
+.phpunit.result.cache
+.phpunit.cache/
+.php-cs-fixer.cache
+
+# IDE and OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+phpunit.xml
