@@ -2,6 +2,7 @@
 
 [![Latest Version on Packagist](https://img.shields.io/packagist/v/mimon/kafka-logger.svg?style=flat-square)](https://packagist.org/packages/mimon/kafka-logger)
 [![Total Downloads](https://img.shields.io/packagist/dt/mimon/kafka-logger.svg?style=flat-square)](https://packagist.org/packages/mimon/kafka-logger)
+[![PHP Version](https://img.shields.io/packagist/dependency-v/mimon/kafka-logger/php?style=flat-square)](https://packagist.org/packages/mimon/kafka-logger)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE.md)
 
 Standardized Enterprise Kafka Log Payload Builder, Schema Validator & Facade for Laravel Microservices and Distributed Logging Systems.
