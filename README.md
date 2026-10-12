@@ -18,7 +18,6 @@ Designed specifically for **Centralized Logging Systems (CLS)** in decoupled mic
 - **Latency & APM Ready**: Emits `timestamps.created_at` and `timestamps.produced_at` for sub-millisecond network latency tracking.
 - **Auto-Environment Detection**: Automatically infers `LOCAL`, `STAGING`, or `PRODUCTION` from Laravel's environment.
 - **Automatic Exception Parsing**: Formats exception codes and stack traces automatically for `ERROR` and `CRITICAL` levels.
-- **Resilient Fallback**: Automatically logs to the local database even if the Kafka broker is temporarily unreachable.
 
 ---
 
@@ -164,7 +163,7 @@ Every message emitted to Kafka adheres strictly to the following enterprise sche
 
 ```json
 {
-  "log_id": "550e8400-e29b-41d4-a716-446655440000",
+  "log_id": "55...",
   "environment": "LOCAL",
   "application": {
     "name": "HR_APP",
@@ -179,8 +178,8 @@ Every message emitted to Kafka adheres strictly to the following enterprise sche
     "message": "Successfully registered new employee profile."
   },
   "trace": {
-    "trace_id": "tr-20261012-98124",
-    "span_id": "sp-0012"
+    "trace_id": "t...",
+    "span_id": "s..."
   },
   "actor": {
     "user_id": "usr_admin_10293",
