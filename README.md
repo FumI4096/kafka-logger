@@ -23,10 +23,10 @@ Designed for **Centralized Logging Systems (CLS)** across distributed applicatio
 
 ## 1. Installation & Setup
 
-### Step 1: Install via Compose
+### Step 1: Install via Composer
 
 ```bash
-composer require mimon/kafka-logge
+composer require mimon/kafka-logger
 ```
 
 *(Laravel Package Auto-Discovery automatically registers `KafkaLoggerServiceProvider` and the `KafkaLogger` facade.)*
