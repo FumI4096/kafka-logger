@@ -1,169 +1,253 @@
-# mimon/kafka-logger
+# mimon/kafka-logge
 
 [![Latest Version on Packagist](https://img.shields.io/packagist/v/mimon/kafka-logger.svg?style=flat-square)](https://packagist.org/packages/mimon/kafka-logger)
 [![Total Downloads](https://img.shields.io/packagist/dt/mimon/kafka-logger.svg?style=flat-square)](https://packagist.org/packages/mimon/kafka-logger)
 [![PHP Version](https://img.shields.io/packagist/dependency-v/mimon/kafka-logger/php?style=flat-square)](https://packagist.org/packages/mimon/kafka-logger)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE.md)
 
-Standardized Enterprise Kafka Log Payload Builder, Schema Validator & Facade for Laravel Microservices and Distributed Logging Systems.
+Standardized Enterprise Kafka Log Payload Builder, Schema Validator & Automatic Event Listener for Laravel + Filament Microservices.
 
-Designed specifically for **Centralized Logging Systems (CLS)** in decoupled microservices, event-driven architectures, and distributed systems.
-
----
-
-## Features
-
-- **Fluent Builder Pattern**: Clean, expressive syntax (`KafkaLogger::event(...)->info()->send()`).
-- **Standardized Enterprise Schema**: Auto-injects UUID `log_id`, distributed `trace_id`, client IP, host IP, and high-precision timestamps.
-- **Latency & APM Ready**: Emits `timestamps.created_at` and `timestamps.produced_at` for sub-millisecond network latency tracking.
-- **Auto-Environment Detection**: Automatically infers `LOCAL`, `STAGING`, or `PRODUCTION` from Laravel's environment.
-- **Automatic Exception Parsing**: Formats exception codes and stack traces automatically for `ERROR` and `CRITICAL` levels.
+Designed for **Centralized Logging Systems (CLS)** across distributed applications — providing **zero-config automatic logging** for authentication and errors while giving developers a **fluent Builder API** for custom domain and audit logs.
 
 ---
 
-## Installation
+## Key Features
 
-Install the package via Composer:
+- **Built-in Automatic Authentication Logging**: Automatically listens to Laravel's `Login`, `Failed`, and `Logout` events — no manual login/logout logging code required.
+- **Built-in Automatic Error & Exception Tracing**: Automatically intercepts unhandled exceptions, failed queue jobs (`JobFailed`), and `Log::error()` / `Log::critical()` calls. Auto-detects database (`pgsql`/`mysql`), external API, cache, and Filament/Livewire context.
+- **Developer-Friendly Fluent Builder**: Simple chainable API (`KafkaLogger::event(...)->message(...)->info()->send()`) for custom business events and audit trails.
+- **Smart Config Defaults**: `appName`, `environment`, `topic`, `component`, and `actor` automatically fall back to your `.env` / config settings so you only write what you need.
+- **Contract Schema Validation**: Validates every payload against the Enterprise CLS JSON contract before publishing to Kafka.
+
+---
+
+## 1. Installation & Setup
+
+### Step 1: Install via Compose
 
 ```bash
-composer require mimon/kafka-logger
+composer require mimon/kafka-logge
 ```
 
-Publish the configuration file:
+*(Laravel Package Auto-Discovery automatically registers `KafkaLoggerServiceProvider` and the `KafkaLogger` facade.)*
+
+### Step 2: Publish the Configuration File
 
 ```bash
 php artisan vendor:publish --tag=kafka-logger-config
 ```
 
----
+### Step 3: Configure `.env`
 
-## Configuration
-
-In your application's `.env` file, specify your Kafka broker and centralized logging topic:
+Add the following variables to your application's `.env` file:
 
 ```env
-# Kafka Broker connection
+# Kafka Broker Connection
 KAFKA_BROKERS=localhost:9092
 
-# Logging configurations
-KAFKA_LOGGER_DEFAULT_TOPIC=CLS.LOCAL.logs
+# Application Identity & Default Topic
 KAFKA_LOGGER_APP_NAME=HR_APP
 KAFKA_LOGGER_ENVIRONMENT=LOCAL
+KAFKA_LOGGER_DEFAULT_TOPIC=CLS.LOCAL.logs
+
+# Optional Toggles (Enabled by default)
+KAFKA_LOGGER_PRODUCE=true
+KAFKA_LOGGER_AUTO_VALIDATE=true
+KAFKA_LOGGER_AUTO_LOG_AUTH=true
+KAFKA_LOGGER_AUTO_LOG_ERRORS=true
 ```
 
 ---
 
-## Usage
+## 2. What Is Logged Automatically (Zero Code Required)
 
-### 1. Standard Audit / Event Log
+Once installed, `mimon/kafka-logger` automatically runs two background listeners out of the box:
+
+### A. Automatic Authentication Logs (`LogAuthenticationEvents`)
+Enabled via `KAFKA_LOGGER_AUTO_LOG_AUTH=true` (default). Automatically dispatches `ComponentSubsystem::AUTHENTICATION` logs whenever a user logs in, fails login, or logs out:
+- **`USER_LOGIN`** (`INFO`): Captures user ID, email, name, guard, IP address, user agent, Spatie/Shield roles (`getRoleNames()`), and office metadata.
+- **`USER_LOGIN_FAILED`** (`WARNING`): Captures attempted email/username, guard, IP address, and user agent.
+- **`USER_LOGOUT`** (`INFO`): Captures user ID, email, guard, and IP address.
+
+> **Tip — Custom User Metadata**: Implement `public function toKafkaLogMetadata(): array` on your `User` model to automatically merge extra user fields into every login log.
+
+### B. Automatic Error & Exception Tracing (`LogErrorEvents`)
+Enabled via `KAFKA_LOGGER_AUTO_LOG_ERRORS=true` (default). Automatically listens to `Illuminate\Log\Events\MessageLogged` (`error`, `critical`, `alert`, `emergency`) and `Illuminate\Queue\Events\JobFailed`:
+- **Unhandled Exceptions**: Any uncaught exception in controllers, Filament resources, Livewire actions, or console commands is automatically formatted with its error code, file, line, and stack trace.
+- **Database Errors (PostgreSQL & MySQL)**: Automatically classifies `QueryException` and `PDOException` under `ComponentSubsystem::DATABASE` (`DATABASE_QUERY_ERROR`) and extracts `db_connection` (`pgsql`/`mysql`) and `sql_state`.
+- **Filament & Livewire Awareness**: When an error occurs during a Filament action or form submission (`POST /livewire/update`), it automatically captures `filament_page_url` and `filament_component`.
+- **Standard `Log::error()` Calls**: Even if you catch an exception inside a Filament action to show a toast notification and call `Log::error('...', ['exception' => $e])`, the listener automatically forwards it to Kafka.
+
+*To disable either automatic listener in a specific app, set `KAFKA_LOGGER_AUTO_LOG_AUTH=false` or `KAFKA_LOGGER_AUTO_LOG_ERRORS=false` in `.env`.*
+
+---
+
+## 3. How to Manually Create Custom Logs (Fluent Builder Guide)
+
+While authentication and general errors are handled automatically, you can manually create **custom audit logs, domain events, or custom error logs** anywhere in your application using the `KafkaLogger` facade.
+
+### Minimal Example (Using Smart Defaults)
+
+Because `appName`, `environment`, `topic`, `component`, and `actor` have defaults configured, **only `event()` and `message()` are required**:
 
 ```php
-use App\Enums\ComponentSubsystem;
 use Mimon\KafkaLogger\Facades\KafkaLogger;
 
 KafkaLogger::event('EMPLOYEE_CREATED')
-    ->message('Successfully registered new employee profile.')
+    ->message('New employee profile registered into HR database.')
+    ->info()
+    ->send(); // Alias: ->dispatch() or ->log()
+```
+
+---
+
+### Full Builder Example (Customizing All Fields)
+
+```php
+use Mimon\KafkaLogger\Enums\ComponentSubsystem;
+use Mimon\KafkaLogger\Facades\KafkaLogger;
+
+KafkaLogger::event('APPOINTMENT_APPROVED')
+    ->message('Employee appointment papers approved by HR Admin.')
     ->info()
     ->component(ComponentSubsystem::APPLICATION_LOGIC)
-    ->actor($request->user()->id, $request->user()->role) // e.g., 'usr_101', 'HR_ADMIN'
+    ->actor((string) auth()->id(), 'HR_ADMIN')
     ->withMetadata([
-        'employee_id' => $employee->id,
-        'department'  => 'Institute of Computer Science',
-        'position'    => 'Associate Professor',
+        'employee_id'    => $employee->id,
+        'appointment_no' => $appointment->reference_no,
+        'department'     => 'Institute of Computer Science',
     ])
     ->send();
 ```
 
 ---
 
-### 2. Error & Exception Logging
+### Manual Custom Error & Exception Logging
 
-Pass an exception directly to `withException()` or `error()`. The builder automatically extracts the error code and stack trace:
+When you want to catch an exception yourself and log a **specific domain error event** (instead of relying on the generic automatic error listener), use `->error()` or `->critical()` with `->withException($e)`:
 
 ```php
-use App\Enums\ComponentSubsystem;
+use Mimon\KafkaLogger\Enums\ComponentSubsystem;
 use Mimon\KafkaLogger\Facades\KafkaLogger;
 
 try {
-    // Database or external operation...
+    $this->payrollService->generateSalaryDocument($employee);
 } catch (\Throwable $e) {
-    KafkaLogger::event('DATABASE_TRANSACTION_FAILED')
-        ->message('Failed to persist employee record to PostgreSQL.')
-        ->error(exception: $e)
-        ->component(ComponentSubsystem::DATABASE)
-        ->actor(auth()->id(), 'SYSTEM')
-        ->withMetadata(['record_id' => $id])
+    KafkaLogger::event('SALARY_DOCUMENT_GENERATION_FAILED')
+        ->message('Failed to generate PDF salary document for employee.')
+        ->error()
+        ->withException($e) // Automatically extracts error code & stack trace
+        ->component(ComponentSubsystem::APPLICATION_LOGIC)
+        ->actor((string) auth()->id(), 'HR_ADMIN')
+        ->withMetadata([
+            'employee_id' => $employee->id,
+            'period'      => '2026-10',
+        ])
         ->send();
-
-    throw $e;
 }
 ```
 
----
-
-### 3. File Storage & Queue Workers
-
-Track background operations and file transactions with dedicated subsystem taxonomies:
+You can also log business/validation errors **without** a PHP exception:
 
 ```php
-// Background queue job
-KafkaLogger::event('SALARY_PDF_GENERATED')
-    ->message('Payroll report rendered successfully.')
-    ->info()
-    ->component(ComponentSubsystem::QUEUE_JOB)
-    ->withMetadata(['job_id' => $this->job->getJobId()])
-    ->send();
-
-// S3 / Drive upload
-KafkaLogger::event('DOCUMENT_UPLOADED')
-    ->message('Applicant resume stored in S3 bucket.')
-    ->info()
-    ->component(ComponentSubsystem::STORAGE)
+KafkaLogger::event('VOUCHER_BALANCE_MISMATCH')
+    ->message('Disbursement voucher total does not match itemized breakdown.')
+    ->error()
+    ->component(ComponentSubsystem::APPLICATION_LOGIC)
+    ->actor((string) auth()->id(), 'CASHIER')
+    ->withMetadata([
+        'voucher_id' => $voucher->id,
+        'expected'   => 15000.00,
+        'actual'     => 14500.00,
+    ])
     ->send();
 ```
 
 ---
 
-### 4. Quick One-Liners
+### Available Builder Methods Reference
+
+| Method | Required? | Description | Default if Omitted |
+| :--- | :---: | :--- | :--- |
+| `->event(string $eventType)` | **Yes** | Event name in `UPPER_SNAKE_CASE` (e.g. `'EMPLOYEE_CREATED'`). | `'SYSTEM_EVENT'` |
+| `->message(string $message)` | **Yes** | Human-readable description of what happened. | — |
+| `->debug(?string $msg = null)` | Optional | Sets severity level to `LogLevel::DEBUG`. | — |
+| `->info(?string $msg = null)` | Optional | Sets severity level to `LogLevel::INFO` (and optionally sets message). | `LogLevel::INFO` |
+| `->warning(?string $msg = null)` | Optional | Sets severity level to `LogLevel::WARNING`. | — |
+| `->error(?string $msg = null, ?Throwable $e = null)` | Optional | Sets severity level to `LogLevel::ERROR` (and optionally attaches exception). | — |
+| `->critical(?string $msg = null, ?Throwable $e = null)` | Optional | Sets severity level to `LogLevel::CRITICAL` (and optionally attaches exception). | — |
+| `->level(LogLevel\|string $level)` | Optional | Explicitly sets the `LogLevel` enum or string value. | `LogLevel::INFO` |
+| `->component(ComponentSubsystem\|string $comp)` | Optional | Subsystem classification (see Section 5). | `ComponentSubsystem::APPLICATION_LOGIC` |
+| `->actor(string $userId, ?string $role = null)` | Optional | Sets the user ID and role in `UPPER_SNAKE_CASE`. Alias: `->user()`. | `'usr_system'` / `'SYSTEM'` |
+| `->withMetadata(array $data)` | Optional | Attaches custom key-value context. Alias: `->withContext()`. | `[]` |
+| `->withException(Throwable $e)` | Optional | Extracts `error.code` and `error.stack_trace` from an exception. | `null` |
+| `->appName(string $name)` | Optional | Overrides the application name for this log entry. | `config('kafka-logger.app_name')` |
+| `->environment(Environment\|string $env)` | Optional | Overrides environment (`LOCAL`, `DEVELOPMENT`, `STAGING`, `PRODUCTION`). | `config('kafka-logger.environment')` |
+| `->topic(string $topic)` | Optional | Overrides the target Kafka topic for this log entry. | `config('kafka-logger.default_topic')` |
+| `->send()` / `->dispatch()` / `->log()` | **Yes** | Validates the payload and dispatches it to Kafka. | — |
+
+---
+
+## 4. Log Levels & Severity Methods (`Mimon\KafkaLogger\Enums\LogLevel`)
+
+You can set the log severity either by calling the dedicated helper method (`->info()`, `->warning()`, `->error()`, `->critical()`, `->debug()`) or by passing the `LogLevel` enum to `->level()`:
 
 ```php
-// Quick info
-KafkaLogger::info('User session initiated.')
-    ->event('USER_LOGIN')
-    ->actor(auth()->id(), 'STUDENT')
-    ->send();
+use Mimon\KafkaLogger\Enums\LogLevel;
+use Mimon\KafkaLogger\Facades\KafkaLogger;
 
-// Quick warning
-KafkaLogger::warning('Cache miss encountered for appointments index.')
-    ->component(ComponentSubsystem::CACHE)
+// Option A: Using fluent severity methods (Recommended)
+KafkaLogger::event('CACHE_MISS')->message('Cache key expired')->debug()->send();
+KafkaLogger::event('EMPLOYEE_CREATED')->message('Profile created')->info()->send();
+KafkaLogger::event('RATE_LIMIT_NEAR')->message('80% quota used')->warning()->send();
+KafkaLogger::event('QUERY_FAILED')->message('Insert failed')->error(exception: $e)->send();
+KafkaLogger::event('BROKER_DOWN')->message('Service unreachable')->critical(exception: $e)->send();
+
+// Option B: Starting directly from the facade severity method
+KafkaLogger::info('Profile created')->event('EMPLOYEE_CREATED')->send();
+KafkaLogger::warning('80% quota used')->event('RATE_LIMIT_NEAR')->send();
+KafkaLogger::error('Insert failed', $e)->event('QUERY_FAILED')->send();
+
+// Option C: Passing the LogLevel Enum explicitly
+KafkaLogger::event('EMPLOYEE_CREATED')
+    ->message('Profile created')
+    ->level(LogLevel::INFO)
     ->send();
 ```
 
----
-
-## Subsystem Component Taxonomy
-
-| Component Value | Recommended Use Case |
-| :--- | :--- |
-| `APPLICATION_LOGIC` | Business logic, controller actions, service classes |
-| `DATABASE` | Eloquent models, SQL queries, database transactions |
-| `KAFKA_PRODUCER` | Outbound domain event publishing |
-| `KAFKA_CONSUMER` | Inbound domain event processing |
-| `QUEUE_JOB` | Asynchronous Laravel queue workers |
-| `STORAGE` | File uploads, downloads, S3, Google Drive, or MinIO operations |
-| `EXTERNAL_API` | HTTP clients (Guzzle), third-party API webhooks |
-| `AUTHENTICATION` | Logins, token verification, permission denials |
-| `CACHE` | Redis, Memcached read/write operations |
+| Enum Case | String Value | Fluent Builder Method | Recommended Use Case |
+| :--- | :--- | :--- | :--- |
+| `LogLevel::DEBUG` | `'DEBUG'` | `->debug()` | Diagnostic details, payload inspections, cache hits/misses during development |
+| `LogLevel::INFO` | `'INFO'` | `->info()` | Standard business events, audit logs, logins, successful CRUD actions *(Default)* |
+| `LogLevel::WARNING` | `'WARNING'` | `->warning()` | Failed login attempts, deprecated usage, retries, non-breaking anomalies |
+| `LogLevel::ERROR` | `'ERROR'` | `->error()` | Handled/unhandled runtime exceptions, failed queries, failed queue jobs |
+| `LogLevel::CRITICAL` | `'CRITICAL'` | `->critical()` | System-wide outages, database/broker unreachability, data corruption risks |
 
 ---
 
-## Log Payload Structure
+## 5. Subsystem Component Taxonomy (`Mimon\KafkaLogger\Enums\ComponentSubsystem`)
 
-Every message emitted to Kafka adheres strictly to the following enterprise schema:
+| Enum Case | Value | Recommended Use Case |
+| :--- | :--- | :--- |
+| `ComponentSubsystem::APPLICATION_LOGIC` | `'APPLICATION_LOGIC'` | Business logic, Filament resources/actions, controllers, services |
+| `ComponentSubsystem::DATABASE` | `'DATABASE'` | Eloquent models, PostgreSQL/MySQL queries, transactions |
+| `ComponentSubsystem::KAFKA_PRODUCER` | `'KAFKA_PRODUCER'` | Outbound Kafka event publishing |
+| `ComponentSubsystem::KAFKA_CONSUMER` | `'KAFKA_CONSUMER'` | Inbound Kafka event processing |
+| `ComponentSubsystem::QUEUE_JOB` | `'QUEUE_JOB'` | Asynchronous Laravel queue workers and background jobs |
+| `ComponentSubsystem::STORAGE` | `'STORAGE'` | File uploads, PDF generation, S3, or local disk operations |
+| `ComponentSubsystem::EXTERNAL_API` | `'EXTERNAL_API'` | HTTP client (`Http::get/post`) calls, third-party webhooks |
+| `ComponentSubsystem::AUTHENTICATION` | `'AUTHENTICATION'` | Login, logout, failed auth, permission/role checks |
+| `ComponentSubsystem::CACHE` | `'CACHE'` | Redis or cache read/write operations |
+
+---
+
+## 6. Standardized JSON Payload Output
+
+Every message emitted to Kafka strictly follows this enterprise schema:
 
 ```json
 {
-  "log_id": "55...",
+  "log_id": "550e8400-e29b-41d4-a716-446655440000",
   "environment": "LOCAL",
   "application": {
     "name": "HR_APP",
@@ -175,11 +259,11 @@ Every message emitted to Kafka adheres strictly to the following enterprise sche
     "type": "EMPLOYEE_CREATED",
     "level": "INFO",
     "topic": "CLS.LOCAL.logs",
-    "message": "Successfully registered new employee profile."
+    "message": "New employee profile registered into HR database."
   },
   "trace": {
-    "trace_id": "t...",
-    "span_id": "s..."
+    "trace_id": "tr-98124uplb202",
+    "span_id": "sp-0012ab"
   },
   "actor": {
     "user_id": "usr_admin_10293",
@@ -187,8 +271,8 @@ Every message emitted to Kafka adheres strictly to the following enterprise sche
     "client_ip": "192.168.1.55"
   },
   "timestamps": {
-    "created_at": "2026-10-12T14:16:20.100Z",
-    "produced_at": "2026-10-12T14:16:20.105Z"
+    "created_at": "2026-10-13T09:00:20+08:00",
+    "produced_at": "2026-10-13T09:00:20+08:00"
   },
   "error": {
     "code": null,
@@ -196,7 +280,7 @@ Every message emitted to Kafka adheres strictly to the following enterprise sche
   },
   "metadata": {
     "employee_id": 101,
-    "position": "Associate Professor"
+    "department": "Institute of Computer Science"
   }
 }
 ```
@@ -205,10 +289,10 @@ Every message emitted to Kafka adheres strictly to the following enterprise sche
 
 ## Testing
 
-Run unit tests via PHPUnit:
+Run the package unit test suite via PHPUnit:
 
 ```bash
-composer test
+vendor/bin/phpunit
 ```
 
 ---
