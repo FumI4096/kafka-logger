@@ -103,7 +103,7 @@ class LoggerService
                 $producer = method_exists('\Junges\Kafka\Facades\Kafka', 'publishOn')
                     ? \Junges\Kafka\Facades\Kafka::publishOn($formattedTopic)
                     : \Junges\Kafka\Facades\Kafka::publish()->onTopic($formattedTopic);
-                $producer->withBody(json_encode($payload))
+                $producer->withBody($payload)
                     ->withHeaders([
                         'x-trace-id' => $traceId,
                         'x-log-id'   => $logId,
