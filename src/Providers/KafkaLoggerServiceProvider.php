@@ -13,7 +13,7 @@ use Mimon\KafkaLogger\Listeners\LogAuthenticationEvents;
 use Mimon\KafkaLogger\Listeners\LogErrorEvents;
 use Mimon\KafkaLogger\Services\KafkaLoggerService;
 
-class KafkaLoggerServiceProvider extends ServiceProvide
+class KafkaLoggerServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
