@@ -1,4 +1,4 @@
-# mimon/kafka-logge
+# mimon/kafka-logger
 
 [![Latest Version on Packagist](https://img.shields.io/packagist/v/mimon/kafka-logger.svg?style=flat-square)](https://packagist.org/packages/mimon/kafka-logger)
 [![Total Downloads](https://img.shields.io/packagist/dt/mimon/kafka-logger.svg?style=flat-square)](https://packagist.org/packages/mimon/kafka-logger)
@@ -7,13 +7,13 @@
 
 Standardized Enterprise Kafka Log Payload Builder, Schema Validator & Automatic Event Listener for Laravel + Filament Microservices.
 
-Designed for **Centralized Logging Systems (CLS)** across distributed applications — providing **zero-config automatic logging** for authentication and errors while giving developers a **fluent Builder API** for custom domain and audit logs.
+Designed for **Centralized Logging Systems (CLS)** across distributed applications â€” providing **zero-config automatic logging** for authentication and errors while giving developers a **fluent Builder API** for custom domain and audit logs.
 
 ---
 
 ## Key Features
 
-- **Built-in Automatic Authentication Logging**: Automatically listens to Laravel's `Login`, `Failed`, and `Logout` events — no manual login/logout logging code required.
+- **Built-in Automatic Authentication Logging**: Automatically listens to Laravel's `Login`, `Failed`, and `Logout` events â€” no manual login/logout logging code required.
 - **Built-in Automatic Error & Exception Tracing**: Automatically intercepts unhandled exceptions, failed queue jobs (`JobFailed`), and `Log::error()` / `Log::critical()` calls. Auto-detects database (`pgsql`/`mysql`), external API, cache, and Filament/Livewire context.
 - **Developer-Friendly Fluent Builder**: Simple chainable API (`KafkaLogger::event(...)->message(...)->info()->send()`) for custom business events and audit trails.
 - **Smart Config Defaults**: `appName`, `environment`, `topic`, `component`, and `actor` automatically fall back to your `.env` / config settings so you only write what you need.
@@ -69,7 +69,7 @@ Enabled via `KAFKA_LOGGER_AUTO_LOG_AUTH=true` (default). Automatically dispatche
 - **`USER_LOGIN_FAILED`** (`WARNING`): Captures attempted email/username, guard, IP address, and user agent.
 - **`USER_LOGOUT`** (`INFO`): Captures user ID, email, guard, and IP address.
 
-> **Tip — Custom User Metadata**: Implement `public function toKafkaLogMetadata(): array` on your `User` model to automatically merge extra user fields into every login log.
+> **Tip â€” Custom User Metadata**: Implement `public function toKafkaLogMetadata(): array` on your `User` model to automatically merge extra user fields into every login log.
 
 ### B. Automatic Error & Exception Tracing (`LogErrorEvents`)
 Enabled via `KAFKA_LOGGER_AUTO_LOG_ERRORS=true` (default). Automatically listens to `Illuminate\Log\Events\MessageLogged` (`error`, `critical`, `alert`, `emergency`) and `Illuminate\Queue\Events\JobFailed`:
@@ -170,12 +170,12 @@ KafkaLogger::event('VOUCHER_BALANCE_MISMATCH')
 | Method | Required? | Description | Default if Omitted |
 | :--- | :---: | :--- | :--- |
 | `->event(string $eventType)` | **Yes** | Event name in `UPPER_SNAKE_CASE` (e.g. `'EMPLOYEE_CREATED'`). | `'SYSTEM_EVENT'` |
-| `->message(string $message)` | **Yes** | Human-readable description of what happened. | — |
-| `->debug(?string $msg = null)` | Optional | Sets severity level to `LogLevel::DEBUG`. | — |
+| `->message(string $message)` | **Yes** | Human-readable description of what happened. | â€” |
+| `->debug(?string $msg = null)` | Optional | Sets severity level to `LogLevel::DEBUG`. | â€” |
 | `->info(?string $msg = null)` | Optional | Sets severity level to `LogLevel::INFO` (and optionally sets message). | `LogLevel::INFO` |
-| `->warning(?string $msg = null)` | Optional | Sets severity level to `LogLevel::WARNING`. | — |
-| `->error(?string $msg = null, ?Throwable $e = null)` | Optional | Sets severity level to `LogLevel::ERROR` (and optionally attaches exception). | — |
-| `->critical(?string $msg = null, ?Throwable $e = null)` | Optional | Sets severity level to `LogLevel::CRITICAL` (and optionally attaches exception). | — |
+| `->warning(?string $msg = null)` | Optional | Sets severity level to `LogLevel::WARNING`. | â€” |
+| `->error(?string $msg = null, ?Throwable $e = null)` | Optional | Sets severity level to `LogLevel::ERROR` (and optionally attaches exception). | â€” |
+| `->critical(?string $msg = null, ?Throwable $e = null)` | Optional | Sets severity level to `LogLevel::CRITICAL` (and optionally attaches exception). | â€” |
 | `->level(LogLevel\|string $level)` | Optional | Explicitly sets the `LogLevel` enum or string value. | `LogLevel::INFO` |
 | `->component(ComponentSubsystem\|string $comp)` | Optional | Subsystem classification (see Section 5). | `ComponentSubsystem::APPLICATION_LOGIC` |
 | `->actor(string $userId, ?string $role = null)` | Optional | Sets the user ID and role in `UPPER_SNAKE_CASE`. Alias: `->user()`. | `'usr_system'` / `'SYSTEM'` |
@@ -184,7 +184,7 @@ KafkaLogger::event('VOUCHER_BALANCE_MISMATCH')
 | `->appName(string $name)` | Optional | Overrides the application name for this log entry. | `config('kafka-logger.app_name')` |
 | `->environment(Environment\|string $env)` | Optional | Overrides environment (`LOCAL`, `DEVELOPMENT`, `STAGING`, `PRODUCTION`). | `config('kafka-logger.environment')` |
 | `->topic(string $topic)` | Optional | Overrides the target Kafka topic for this log entry. | `config('kafka-logger.default_topic')` |
-| `->send()` / `->dispatch()` / `->log()` | **Yes** | Validates the payload and dispatches it to Kafka. | — |
+| `->send()` / `->dispatch()` / `->log()` | **Yes** | Validates the payload and dispatches it to Kafka. | â€” |
 
 ---
 

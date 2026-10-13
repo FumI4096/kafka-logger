@@ -2,12 +2,6 @@
 
 namespace Mimon\KafkaLogger\Listeners;
 
-use Illuminate\Auth\Access\AuthorizationException;
-use Illuminate\Auth\AuthenticationException;
-use Illuminate\Database\QueryException;
-use Illuminate\Http\Client\HttpClientException;
-use Illuminate\Log\Events\MessageLogged;
-use Illuminate\Queue\Events\JobFailed;
 use Mimon\KafkaLogger\Enums\ComponentSubsystem;
 use Mimon\KafkaLogger\Enums\LogLevel;
 use Mimon\KafkaLogger\Facades\KafkaLogger;
@@ -32,24 +26,26 @@ class LogErrorEvents
     /**
      * Handle Laravel's MessageLogged event for error, critical, alert, and emergency levels.
      */
-    public function handleMessageLogged(MessageLogged $event): void
+    public function handleMessageLogged(object $event): void
     {
         if (self::$isHandling) {
             return;
         }
 
-        $levelName = strtolower($event->level);
+        $levelName = strtolower((string) ($event->level ?? ''));
         if (! in_array($levelName, ['error', 'critical', 'alert', 'emergency'], true)) {
             return;
         }
 
-        $message = (string) $event->message;
+        $message = (string) ($event->message ?? '');
         if (str_starts_with($message, 'mimon/kafka-logger:')) {
             return;
         }
 
-        $exception = ($event->context['exception'] ?? null) instanceof Throwable
-            ? $event->context['exception']
+        $context = is_array($event->context ?? null) ? $event->context : [];
+
+        $exception = ($context['exception'] ?? null) instanceof Throwable
+            ? $context['exception']
             : null;
 
         if ($exception !== null) {
@@ -67,15 +63,15 @@ class LogErrorEvents
                 ? LogLevel::CRITICAL
                 : LogLevel::ERROR;
 
-            [$component, $defaultEventType] = $this->resolveComponentAndEventType($exception, $event->context);
+            [$component, $defaultEventType] = $this->resolveComponentAndEventType($exception, $context);
 
-            $eventType = ! empty($event->context['event_type']) && is_string($event->context['event_type'])
-                ? $event->context['event_type']
+            $eventType = ! empty($context['event_type']) && is_string($context['event_type'])
+                ? $context['event_type']
                 : $defaultEventType;
 
             [$userId, $userRole] = $this->resolveActor();
 
-            $metadata = $this->buildMetadata($event->context, $exception);
+            $metadata = $this->buildMetadata($context, $exception);
 
             $builder = KafkaLogger::event($eventType)
                 ->message($message !== '' ? $message : ($exception?->getMessage() ?: 'Application error occurred.'))
@@ -99,9 +95,9 @@ class LogErrorEvents
     /**
      * Handle failed background queue jobs.
      */
-    public function handleJobFailed(JobFailed $event): void
+    public function handleJobFailed(object $event): void
     {
-        if (self::$isHandling) {
+        if (self::$isHandling || ! isset($event->exception) || ! ($event->exception instanceof Throwable)) {
             return;
         }
 
@@ -115,9 +111,9 @@ class LogErrorEvents
         self::$isHandling = true;
 
         try {
-            $jobName = method_exists($event->job, 'resolveName')
-                ? $event->job->resolveName()
-                : get_class($event->job);
+            $jobName = isset($event->job) && is_object($event->job)
+                ? (method_exists($event->job, 'resolveName') ? $event->job->resolveName() : get_class($event->job))
+                : 'UnknownJob';
 
             KafkaLogger::event('QUEUE_JOB_FAILED')
                 ->message("Queue job [{$jobName}] failed: {$exception->getMessage()}")
@@ -127,8 +123,8 @@ class LogErrorEvents
                 ->withException($exception)
                 ->withMetadata([
                     'job_name'        => $jobName,
-                    'connection_name' => $event->connectionName,
-                    'queue'           => $event->job->getQueue(),
+                    'connection_name' => $event->connectionName ?? null,
+                    'queue'           => (isset($event->job) && method_exists($event->job, 'getQueue')) ? $event->job->getQueue() : null,
                     'exception_class' => get_class($exception),
                     'file'            => $exception->getFile(),
                     'line'            => $exception->getLine(),
@@ -158,20 +154,31 @@ class LogErrorEvents
             }
         }
 
-        if ($exception instanceof QueryException || $exception instanceof PDOException) {
+        if ($exception instanceof PDOException || is_a($exception, 'Illuminate\Database\QueryException')) {
             return [ComponentSubsystem::DATABASE, 'DATABASE_QUERY_ERROR'];
         }
 
-        if ($exception instanceof HttpClientException) {
+        if (is_a($exception, 'Illuminate\Http\Client\HttpClientException')) {
             return [ComponentSubsystem::EXTERNAL_API, 'EXTERNAL_API_ERROR'];
         }
 
-        if ($exception instanceof AuthenticationException || $exception instanceof AuthorizationException) {
+        if (
+            is_a($exception, 'Illuminate\Auth\AuthenticationException')
+            || is_a($exception, 'Illuminate\Auth\Access\AuthorizationException')
+        ) {
             return [ComponentSubsystem::AUTHENTICATION, 'AUTH_ACCESS_DENIED'];
         }
 
         if ($exception !== null) {
             $className = get_class($exception);
+
+            if (str_contains($className, 'HttpClient') || str_contains($className, 'GuzzleHttp')) {
+                return [ComponentSubsystem::EXTERNAL_API, 'EXTERNAL_API_ERROR'];
+            }
+
+            if (str_contains($className, 'AuthenticationException') || str_contains($className, 'AuthorizationException')) {
+                return [ComponentSubsystem::AUTHENTICATION, 'AUTH_ACCESS_DENIED'];
+            }
 
             if (str_contains($className, 'Redis') || str_contains($className, 'Cache')) {
                 return [ComponentSubsystem::CACHE, 'CACHE_ERROR'];
@@ -197,18 +204,20 @@ class LogErrorEvents
     protected function resolveActor(): array
     {
         try {
-            $user = auth()->user();
-            if ($user) {
-                $userId = (string) $user->getAuthIdentifier();
-                $role = $this->resolvePrimaryRole($user);
+            if (function_exists('auth') && auth()->check()) {
+                $user = auth()->user();
+                if ($user) {
+                    $userId = (string) $user->getAuthIdentifier();
+                    $role = $this->resolvePrimaryRole($user);
 
-                return [$userId, $role];
+                    return [$userId, $role];
+                }
             }
         } catch (Throwable $e) {
             // Ignore auth resolution errors
         }
 
-        if (app()->runningInConsole()) {
+        if (function_exists('app') && app()->runningInConsole()) {
             return ['usr_system', 'SYSTEM'];
         }
 
@@ -234,7 +243,7 @@ class LogErrorEvents
             $metadata['file'] = $exception->getFile();
             $metadata['line'] = $exception->getLine();
 
-            if ($exception instanceof QueryException) {
+            if (is_a($exception, 'Illuminate\Database\QueryException') && method_exists($exception, 'getConnectionName')) {
                 $metadata['db_connection'] = $exception->getConnectionName();
                 $metadata['sql_state'] = $exception->errorInfo[0] ?? (string) $exception->getCode();
             } elseif ($exception instanceof PDOException) {
@@ -242,13 +251,12 @@ class LogErrorEvents
             }
         }
 
-        if (! app()->runningInConsole() && function_exists('request') && request()) {
+        if (function_exists('app') && ! app()->runningInConsole() && function_exists('request') && request()) {
             $req = request();
             $metadata['url'] = $req->fullUrl();
             $metadata['http_method'] = $req->method();
             $metadata['route_name'] = $req->route()?->getName();
 
-            // Enrich Filament / Livewire AJAX requests with the actual page Referer and component name
             if ($req->hasHeader('X-Livewire') || str_contains($req->path(), 'livewire')) {
                 $metadata['is_livewire'] = true;
                 $metadata['filament_page_url'] = $req->header('Referer');

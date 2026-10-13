@@ -2,14 +2,16 @@
 
 namespace Mimon\KafkaLogger\Tests;
 
-use Illuminate\Auth\AuthenticationException;
-use Illuminate\Http\Client\HttpClientException;
+use Exception;
 use Mimon\KafkaLogger\Enums\ComponentSubsystem;
 use Mimon\KafkaLogger\Listeners\LogErrorEvents;
 use PDOException;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 use RuntimeException;
+
+class FakeHttpClientException extends Exception {}
+class FakeAuthenticationException extends Exception {}
 
 class LogErrorEventsTest extends TestCase
 {
@@ -31,7 +33,7 @@ class LogErrorEventsTest extends TestCase
         $method = new ReflectionMethod($listener, 'resolveComponentAndEventType');
         $method->setAccessible(true);
 
-        [$component, $eventType] = $method->invoke($listener, new HttpClientException('Connection timed out'));
+        [$component, $eventType] = $method->invoke($listener, new FakeHttpClientException('Connection timed out'));
 
         $this->assertSame(ComponentSubsystem::EXTERNAL_API, $component);
         $this->assertSame('EXTERNAL_API_ERROR', $eventType);
@@ -43,7 +45,7 @@ class LogErrorEventsTest extends TestCase
         $method = new ReflectionMethod($listener, 'resolveComponentAndEventType');
         $method->setAccessible(true);
 
-        [$component, $eventType] = $method->invoke($listener, new AuthenticationException('Unauthenticated.'));
+        [$component, $eventType] = $method->invoke($listener, new FakeAuthenticationException('Unauthenticated.'));
 
         $this->assertSame(ComponentSubsystem::AUTHENTICATION, $component);
         $this->assertSame('AUTH_ACCESS_DENIED', $eventType);
