@@ -53,4 +53,39 @@ return [
     |
     */
     'auto_validate' => env('KAFKA_LOGGER_AUTO_VALIDATE', true),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Produce Logs to Kafka Broke
+    |--------------------------------------------------------------------------
+    |
+    | Toggle whether payloads are published to the Kafka broker when
+    | mateusjunges/laravel-kafka is installed.
+    |
+    */
+    'produce_to_kafka' => env('KAFKA_LOGGER_PRODUCE', true),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Automatic Authentication Event Logging
+    |--------------------------------------------------------------------------
+    |
+    | Automatically listen to Laravel's Login, Failed, and Logout events
+    | and dispatch standardized AUTHENTICATION logs to Kafka.
+    |
+    */
+    'auto_log_auth' => env('KAFKA_LOGGER_AUTO_LOG_AUTH', true),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Automatic Error & Exception Tracing
+    |--------------------------------------------------------------------------
+    |
+    | Automatically listen to Laravel's MessageLogged (error/critical/alert/emergency)
+    | and JobFailed events, classify the subsystem (DATABASE, EXTERNAL_API, QUEUE_JOB,
+    | CACHE, STORAGE, APPLICATION_LOGIC), extract Filament/Livewire & SQL context,
+    | and dispatch standardized ERROR/CRITICAL logs to Kafka.
+    |
+    */
+    'auto_log_errors' => env('KAFKA_LOGGER_AUTO_LOG_ERRORS', true),
 ];
