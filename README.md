@@ -37,28 +37,6 @@ composer require mimon/kafka-logger
 php artisan vendor:publish --tag=kafka-logger-config
 ```
 
-### Step 3: Configure `.env`
-
-Add the following variables to your application's `.env` file:
-
-```env
-# Kafka Broker Connection
-KAFKA_BROKERS=localhost:9092
-
-# Application Identity & Default Topic
-KAFKA_LOGGER_APP_NAME=HR_APP
-KAFKA_LOGGER_ENVIRONMENT=LOCAL
-KAFKA_LOGGER_DEFAULT_TOPIC=CLS.LOCAL.logs
-
-# Optional Toggles (Enabled by default)
-KAFKA_LOGGER_PRODUCE=true
-KAFKA_LOGGER_AUTO_VALIDATE=true
-KAFKA_LOGGER_AUTO_LOG_AUTH=true
-KAFKA_LOGGER_AUTO_LOG_ERRORS=true
-```
-
----
-
 ## 2. What Is Logged Automatically (Zero Code Required)
 
 Once installed, `mimon/kafka-logger` automatically runs two background listeners out of the box:
@@ -284,6 +262,23 @@ Every message emitted to Kafka strictly follows this enterprise schema:
   }
 }
 ```
+
+## 7. Environment Configuration Variables
+
+| Key | Default | Description |
+| :--- | :--- | :--- |
+| `KAFKA_LOGGER_APP_NAME` | `'HR_APP'` | Enterprise identifier for the microservice |
+| `KAFKA_LOGGER_ENVIRONMENT` | `'LOCAL'` | `LOCAL`, `DEVELOPMENT`, `STAGING`, or `PRODUCTION` |
+| `KAFKA_LOGGER_DEFAULT_TOPIC` | `'YOUR_TOPIC'` | Fallback Kafka topic |
+| `KAFKA_LOGGER_PRODUCE` | `true` | Set to `false` in local testing to disable Kafka transmission |
+| `KAFKA_LOGGER_AUTO_LOG_AUTH` | `true` | Automatically listen to Laravel authentication events |
+| `KAFKA_LOGGER_AUTO_LOG_ERRORS` | `true` | Automatically listen to error logs and failed jobs |
+| `KAFKA_LOGGER_CONTEXT_MODE` | `'redact'` | `'redact'` (sanitize keys), `'allowlist'`, or `'none'` |
+| `KAFKA_LOGGER_INCLUDE_SQL` | `false` | Whether to include sanitized SQL queries in DB error metadata |
+| `KAFKA_LOGGER_PRODUCER_TIMEOUT_MS`| `1500` | Max broker wait time in milliseconds |
+| `KAFKA_LOGGER_CIRCUIT_BREAKER_SECONDS`| `30` | Seconds to bypass Kafka after a broker error |
+| `KAFKA_LOGGER_ASYNC` | `false` | Asynchronously publish via queued `SendKafkaLogJob` |
+| `KAFKA_LOGGER_MAX_PAYLOAD_BYTES` | `900000` | Max payload size threshold before progressive truncation |
 
 ---
 
