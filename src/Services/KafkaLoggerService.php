@@ -23,8 +23,8 @@ class KafkaLoggerService
     public function __construct()
     {
         $this->appName = config('kafka-logger.app_name', 'HR_APP');
-        $this->environment = config('kafka-logger.environment', 'PRODUCTION');
-        $this->defaultTopic = config('kafka-logger.default_topic', 'CLS.LOCAL.logs');
+        $this->environment = config('kafka-logger.environment', 'LOCAL');
+        $this->defaultTopic = config('kafka-logger.default_topic', 'YOUR_TOPIC');
         $this->autoValidate = (bool) config('kafka-logger.auto_validate', true);
     }
 
@@ -139,48 +139,6 @@ class KafkaLoggerService
         $userRole = $options['user_role'] ?? 'SYSTEM';
         $metadata = $options['metadata'] ?? [];
         $exception = $options['exception'] ?? null;
-
-        if ($this->autoValidate) {
-            $envStr = $env instanceof Environment ? $env->value : (string) $env;
-            $levelStr = $level instanceof LogLevel ? $level->value : (string) $level;
-            $compStr = $component instanceof ComponentSubsystem ? $component->value : (string) $component;
-            $roleStr = (string) $userRole;
-
-            $draftPayload = [
-                'log_id' => (string) Str::uuid(),
-                'environment' => $envStr,
-                'application' => [
-                    'name' => strtoupper(str_replace('-', '_', $appName)),
-                    'component' => $compStr,
-                    'host_ip' => request()->ip() ?? (gethostbyname(gethostname()) ?: '10.200.4.15'),
-                    'host_name' => gethostname() ?: 'node-01',
-                ],
-                'event' => [
-                    'type' => strtoupper(str_replace(['.', '-'], '_', $eventType)),
-                    'level' => $levelStr,
-                    'topic' => $topic,
-                    'message' => $message,
-                ],
-                'trace' => [
-                    'trace_id' => request()->header('x-trace-id') ?? ('tr-' . Str::random(12)),
-                    'span_id' => 'sp-' . Str::random(6),
-                ],
-                'actor' => [
-                    'user_id' => $userId ?? 'usr_system',
-                    'user_role' => $roleStr,
-                    'client_ip' => request()->ip() ?? '127.0.0.1',
-                ],
-                'timestamps' => [
-                    'created_at' => Carbon::now()->toIso8601String(),
-                    'produced_at' => Carbon::now()->toIso8601String(),
-                ],
-            ];
-
-            $errors = PayloadValidator::validate($draftPayload);
-            if (! empty($errors)) {
-                throw new InvalidArgumentException('Kafka Log Payload validation failed: ' . implode(' ', $errors));
-            }
-        }
 
         return LoggerService::createEnterpriseLog(
             appName: $appName,
