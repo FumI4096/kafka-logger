@@ -3,89 +3,100 @@
 return [
     /*
     |--------------------------------------------------------------------------
-    | Kafka Brokers URL
+    | Kafka Connection
     |--------------------------------------------------------------------------
     |
-    | Comma-separated list of Kafka broker endpoints.
+    | Broker address, TLS and SASL are read from config/kafka.php
+    | (mateusjunges/laravel-kafka): KAFKA_BROKERS, KAFKA_SECURITY_PROTOCOL,
+    | KAFKA_MECHANISMS, KAFKA_USERNAME, KAFKA_PASSWORD. Use SASL_SSL outside LOCAL.
     |
     */
-    'brokers' => env('KAFKA_BROKERS', 'localhost:9092'),
 
-    /*
-    |--------------------------------------------------------------------------
-    | Default Application Name
-    |--------------------------------------------------------------------------
-    |
-    | Unique identifier for this application/microservice producing logs.
-    | Examples: 'HR_APP', 'CASHIER_APP', 'ESTORE', 'REGISTRATION_APP'.
-    |
-    */
     'app_name' => env('KAFKA_LOGGER_APP_NAME', 'HR_APP'),
 
-    /*
-    |--------------------------------------------------------------------------
-    | Deployment Environment
-    |--------------------------------------------------------------------------
-    |
-    | Deployment stage emitting telemetry. Must be one of:
-    | 'PRODUCTION', 'STAGING', 'DEVELOPMENT', 'LOCAL'.
-    |
-    */
-    'environment' => env('KAFKA_LOGGER_ENVIRONMENT', 'PRODUCTION'),
+    // PRODUCTION | STAGING | DEVELOPMENT | LOCAL
+    'environment' => env('KAFKA_LOGGER_ENVIRONMENT', 'LOCAL'),
+
+    'default_topic' => env('KAFKA_LOGGER_DEFAULT_TOPIC', 'YOUR_TOPIC'),
+
+    'produce_to_kafka' => env('KAFKA_LOGGER_PRODUCE', true),
+
+    'auto_log_auth' => env('KAFKA_LOGGER_AUTO_LOG_AUTH', true),
+
+    'auto_log_errors' => env('KAFKA_LOGGER_AUTO_LOG_ERRORS', true),
 
     /*
     |--------------------------------------------------------------------------
-    | Default Kafka Event Topic
+    | Validation
     |--------------------------------------------------------------------------
     |
-    | Kafka topic where produced log payloads are dispatched.
-    |
-    */
-    'default_topic' => env('KAFKA_LOGGER_DEFAULT_TOPIC', 'CLS.LOCAL.logs'),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Automatic Contract Schema Validation
-    |--------------------------------------------------------------------------
-    |
-    | When enabled, every log dispatch is validated against the EnterpriseLogPayload
-    | schema taxonomy before saving/producing. Throws InvalidArgumentException on breach.
+    | auto_validate: validate every payload against the CLS contract.
+    | strict_validation: throw InvalidArgumentException on invalid payloads (good in
+    | local dev). When false, invalid payloads are dropped with a warning and the
+    | user's request is never interrupted. Defaults to true only when APP_ENV=local.
     |
     */
     'auto_validate' => env('KAFKA_LOGGER_AUTO_VALIDATE', true),
 
-    /*
-    |--------------------------------------------------------------------------
-    | Produce Logs to Kafka Broke
-    |--------------------------------------------------------------------------
-    |
-    | Toggle whether payloads are published to the Kafka broker when
-    | mateusjunges/laravel-kafka is installed.
-    |
-    */
-    'produce_to_kafka' => env('KAFKA_LOGGER_PRODUCE', true),
+    'strict_validation' => env('KAFKA_LOGGER_STRICT_VALIDATION', env('APP_ENV') === 'local'),
 
     /*
     |--------------------------------------------------------------------------
-    | Automatic Authentication Event Logging
+    | Privacy / Redaction
     |--------------------------------------------------------------------------
     |
-    | Automatically listen to Laravel's Login, Failed, and Logout events
-    | and dispatch standardized AUTHENTICATION logs to Kafka.
+    | redact_keys: any metadata/context key containing one of these words
+    | (word-boundary match, case-insensitive, camelCase aware) is replaced
+    | with [REDACTED]. Applies to auto-logged errors AND manual withMetadata().
+    |
+    | context_mode (auto error listener only):
+    |   'redact'    - forward Log::error() context with sensitive keys redacted (default)
+    |   'allowlist' - forward only keys listed in context_allowlist
+    |   'none'      - never forward Log::error() context
+    |
+    | include_sql: when true, adds the SQL with "?" placeholders (never bound values).
     |
     */
-    'auto_log_auth' => env('KAFKA_LOGGER_AUTO_LOG_AUTH', true),
+    'redact_keys' => [
+        'password', 'passwd', 'pwd', 'secret', 'token', 'authorization', 'cookie',
+        'api_key', 'apikey', 'private_key', 'credit_card', 'card_number', 'cvv', 'cvc',
+        'pin', 'otp', 'session', 'ssn', 'x_api_key', 'client_secret',
+    ],
+
+    'context_mode' => env('KAFKA_LOGGER_CONTEXT_MODE', 'redact'),
+
+    'context_allowlist' => ['event_type', 'component'],
+
+    'include_sql' => env('KAFKA_LOGGER_INCLUDE_SQL', false),
 
     /*
     |--------------------------------------------------------------------------
-    | Automatic Error & Exception Tracing
+    | Size Limits
     |--------------------------------------------------------------------------
     |
-    | Automatically listen to Laravel's MessageLogged (error/critical/alert/emergency)
-    | and JobFailed events, classify the subsystem (DATABASE, EXTERNAL_API, QUEUE_JOB,
-    | CACHE, STORAGE, APPLICATION_LOGIC), extract Filament/Livewire & SQL context,
-    | and dispatch standardized ERROR/CRITICAL logs to Kafka.
+    | Kafka's default message.max.bytes is ~1 MB. Oversized payloads are trimmed:
+    | message -> stack trace frames -> metadata.
     |
     */
-    'auto_log_errors' => env('KAFKA_LOGGER_AUTO_LOG_ERRORS', true),
+    'max_payload_bytes' => env('KAFKA_LOGGER_MAX_PAYLOAD_BYTES', 900000),
+
+    'max_trace_frames' => env('KAFKA_LOGGER_MAX_TRACE_FRAMES', 25),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Failure Handling
+    |--------------------------------------------------------------------------
+    |
+    | producer_timeout_ms: max time a single publish may wait on the broker.
+    | circuit_breaker_seconds: after a failed publish, skip Kafka for N seconds
+    |   so a broker outage costs one timeout, not one per log line. 0 = disabled.
+    | async: dispatch publishing to a queued job (needs a real queue worker,
+    |   not QUEUE_CONNECTION=sync).
+    |
+    */
+    'producer_timeout_ms' => env('KAFKA_LOGGER_PRODUCER_TIMEOUT_MS', 1500),
+
+    'circuit_breaker_seconds' => env('KAFKA_LOGGER_CIRCUIT_BREAKER_SECONDS', 30),
+
+    'async' => env('KAFKA_LOGGER_ASYNC', false),
 ];

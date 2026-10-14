@@ -173,7 +173,9 @@ class KafkaLogBuilder
     public function dispatch(): array
     {
         $eventType = $this->eventType ?? 'SYSTEM_EVENT';
-        $message = $this->logMessage ?? '';
+        $message = ($this->logMessage !== null && trim($this->logMessage) !== '')
+            ? $this->logMessage
+            : (str_replace(['.', '-', '_'], ' ', $eventType) . ' event.');
 
         $options = [
             'app_name' => $this->customAppName,

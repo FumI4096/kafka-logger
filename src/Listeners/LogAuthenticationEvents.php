@@ -7,6 +7,7 @@ use Illuminate\Auth\Events\Login;
 use Illuminate\Auth\Events\Logout;
 use Mimon\KafkaLogger\Enums\ComponentSubsystem;
 use Mimon\KafkaLogger\Facades\KafkaLogger;
+use Mimon\KafkaLogger\Support\PayloadSanitizer;
 
 class LogAuthenticationEvents
 {
@@ -62,22 +63,25 @@ class LogAuthenticationEvents
     public function handleFailed(Failed $event): void
     {
         try {
-            $email = $event->credentials['email']
+            // ensure that the identifier is a string and not null
+            $identifier = (string) ($event->credentials['email']
                 ?? $event->credentials['username']
-                ?? 'unknown';
+                ?? $event->credentials['login']
+                ?? '');
 
             $userId = $event->user ? (string) $event->user->getAuthIdentifier() : 'usr_anonymous';
 
             KafkaLogger::event('USER_LOGIN_FAILED')
-                ->message("Failed login attempt for account: {$email}.")
+                ->message('Failed login attempt.')
                 ->warning()
                 ->component(ComponentSubsystem::AUTHENTICATION)
                 ->actor($userId, 'GUEST')
                 ->withMetadata([
-                    'attempted_email' => $email,
-                    'guard'           => $event->guard,
-                    'ip_address'      => request()?->ip(),
-                    'user_agent'      => request()?->userAgent(),
+                    'attempted_identifier_hash' => $identifier !== '' ? PayloadSanitizer::hashIdentifier($identifier) : null,
+                    'identifier_hint'           => $identifier !== '' ? PayloadSanitizer::identifierHint($identifier) : null,
+                    'guard'                     => $event->guard,
+                    'ip_address'                => request()?->ip(),
+                    'user_agent'                => mb_substr((string) request()?->userAgent(), 0, 255),
                 ])
                 ->send();
         } catch (\Throwable $e) {

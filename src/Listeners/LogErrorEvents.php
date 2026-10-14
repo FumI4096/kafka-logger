@@ -5,6 +5,7 @@ namespace Mimon\KafkaLogger\Listeners;
 use Mimon\KafkaLogger\Enums\ComponentSubsystem;
 use Mimon\KafkaLogger\Enums\LogLevel;
 use Mimon\KafkaLogger\Facades\KafkaLogger;
+use Mimon\KafkaLogger\Support\PayloadSanitizer;
 use PDOException;
 use Throwable;
 
@@ -16,12 +17,14 @@ class LogErrorEvents
     protected static bool $isHandling = false;
 
     /**
-     * Track already-dispatched Throwable object IDs within the current request/job lifecycle
-     * to prevent duplicate Kafka logs when both MessageLogged and JobFailed fire.
+     * Track already-dispatched Throwable instances using WeakMap to prevent duplicate
+     * Kafka logs when both MessageLogged and JobFailed fire for the same exception.
+     * WeakMap automatically frees entries when the exception is GC'd, preventing
+     * memory leaks and spl_object_id recycling collisions in long-running queue workers or Octane.
      *
-     * @var array<int, bool>
+     * @var \WeakMap<Throwable, bool>|null
      */
-    protected static array $loggedExceptionIds = [];
+    protected static ?\WeakMap $loggedExceptions = null;
 
     /**
      * Handle Laravel's MessageLogged event for error, critical, alert, and emergency levels.
@@ -49,11 +52,11 @@ class LogErrorEvents
             : null;
 
         if ($exception !== null) {
-            $objId = spl_object_id($exception);
-            if (isset(self::$loggedExceptionIds[$objId])) {
+            self::$loggedExceptions ??= new \WeakMap();
+            if (isset(self::$loggedExceptions[$exception])) {
                 return;
             }
-            self::$loggedExceptionIds[$objId] = true;
+            self::$loggedExceptions[$exception] = true;
         }
 
         self::$isHandling = true;
@@ -102,19 +105,24 @@ class LogErrorEvents
         }
 
         $exception = $event->exception;
-        $objId = spl_object_id($exception);
-        if (isset(self::$loggedExceptionIds[$objId])) {
+        self::$loggedExceptions ??= new \WeakMap();
+        if (isset(self::$loggedExceptions[$exception])) {
             return;
         }
-        self::$loggedExceptionIds[$objId] = true;
+        self::$loggedExceptions[$exception] = true;
+
+        $jobName = isset($event->job) && is_object($event->job)
+            ? (method_exists($event->job, 'resolveName') ? $event->job->resolveName() : get_class($event->job))
+            : 'UnknownJob';
+
+        // Guard against infinite loop if our own async publishing job fails
+        if (str_contains($jobName, 'SendKafkaLogJob')) {
+            return;
+        }
 
         self::$isHandling = true;
 
         try {
-            $jobName = isset($event->job) && is_object($event->job)
-                ? (method_exists($event->job, 'resolveName') ? $event->job->resolveName() : get_class($event->job))
-                : 'UnknownJob';
-
             KafkaLogger::event('QUEUE_JOB_FAILED')
                 ->message("Queue job [{$jobName}] failed: {$exception->getMessage()}")
                 ->error()
@@ -231,11 +239,21 @@ class LogErrorEvents
     {
         $metadata = [];
 
-        foreach ($context as $key => $value) {
-            if ($key === 'exception' || is_object($value)) {
-                continue;
+        // Context forwarding is controlled by kafka-logger.context_mode.
+        // Values are additionally passed through PayloadSanitizer centrally in LoggerService.
+        $mode = (string) PayloadSanitizer::config('kafka-logger.context_mode', 'redact');
+        $allow = (array) PayloadSanitizer::config('kafka-logger.context_allowlist', ['event_type', 'component']);
+
+        if ($mode !== 'none') {
+            foreach ($context as $key => $value) {
+                if ($key === 'exception' || is_object($value)) {
+                    continue;
+                }
+                if ($mode === 'allowlist' && ! in_array($key, $allow, true)) {
+                    continue;
+                }
+                $metadata[$key] = $value;
             }
-            $metadata[$key] = $value;
         }
 
         if ($exception !== null) {
@@ -246,6 +264,10 @@ class LogErrorEvents
             if (is_a($exception, 'Illuminate\Database\QueryException') && method_exists($exception, 'getConnectionName')) {
                 $metadata['db_connection'] = $exception->getConnectionName();
                 $metadata['sql_state'] = $exception->errorInfo[0] ?? (string) $exception->getCode();
+                // Placeholders only ("?"), never bound values.
+                if (PayloadSanitizer::config('kafka-logger.include_sql', false) && method_exists($exception, 'getSql')) {
+                    $metadata['sql'] = mb_substr((string) $exception->getSql(), 0, 2000);
+                }
             } elseif ($exception instanceof PDOException) {
                 $metadata['sql_state'] = $exception->errorInfo[0] ?? (string) $exception->getCode();
             }
@@ -298,6 +320,6 @@ class LogErrorEvents
      */
     public static function flushLoggedExceptions(): void
     {
-        self::$loggedExceptionIds = [];
+        self::$loggedExceptions = new \WeakMap();
     }
 }
