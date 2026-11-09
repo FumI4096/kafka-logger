@@ -28,8 +28,11 @@ class PayloadValidator
         if (empty($payload['application']) || ! is_array($payload['application'])) {
             $errors[] = "Field 'application' object is required.";
         } else {
-            if (empty($payload['application']['name'])) {
-                $errors[] = "Field 'application.name' is required.";
+            $appCode = $payload['application']['code'] ?? $payload['application']['name'] ?? null;
+            if (empty($appCode)) {
+                $errors[] = "Field 'application.code' is required.";
+            } elseif (! preg_match('/^[A-Z0-9_]+$/', (string) $appCode)) {
+                $errors[] = "Field 'application.code' must be in UPPER_SNAKE_CASE (e.g. HR_APP, CFNR_L).";
             }
             $comp = $payload['application']['component'] ?? null;
             if (empty($comp) || ! ComponentSubsystem::tryFrom(strtoupper((string) $comp))) {

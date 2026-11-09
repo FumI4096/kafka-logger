@@ -21,7 +21,7 @@ class LogAuthenticationEvents
             $userId = (string) $user->getAuthIdentifier();
             $email = $user->email ?? $userId;
             $role = $this->resolvePrimaryRole($user);
-            $appName = config('kafka-logger.app_name', 'APPLICATION');
+            $appCode = config('kafka-logger.app_code', config('kafka-logger.app_name', 'APPLICATION'));
 
             $metadata = [
                 'user_id'    => $user->getAuthIdentifier(),
@@ -46,7 +46,7 @@ class LogAuthenticationEvents
             }
 
             KafkaLogger::event('USER_LOGIN')
-                ->message("User {$email} logged into {$appName}.")
+                ->message("User {$email} logged into {$appCode}.")
                 ->info()
                 ->component(ComponentSubsystem::AUTHENTICATION)
                 ->actor($userId, $role)
@@ -103,10 +103,10 @@ class LogAuthenticationEvents
             $userId = (string) $user->getAuthIdentifier();
             $email = $user->email ?? $userId;
             $role = $this->resolvePrimaryRole($user);
-            $appName = config('kafka-logger.app_name', 'APPLICATION');
+            $appCode = config('kafka-logger.app_code', config('kafka-logger.app_name', 'APPLICATION'));
 
             KafkaLogger::event('USER_LOGOUT')
-                ->message("User {$email} logged out of {$appName}.")
+                ->message("User {$email} logged out of {$appCode}.")
                 ->info()
                 ->component(ComponentSubsystem::AUTHENTICATION)
                 ->actor($userId, $role)

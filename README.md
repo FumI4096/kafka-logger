@@ -16,7 +16,7 @@ Designed for **Centralized Logging Systems (CLS)** across distributed applicatio
 - **Built-in Automatic Authentication Logging**: Automatically listens to Laravel's `Login`, `Failed`, and `Logout` events — no manual login/logout logging code required.
 - **Built-in Automatic Error & Exception Tracing**: Automatically intercepts unhandled exceptions, failed queue jobs (`JobFailed`), and `Log::error()` / `Log::critical()` calls. Auto-detects database (`pgsql`/`mysql`), external API, cache, and Filament/Livewire context.
 - **Developer-Friendly Fluent Builder**: Simple chainable API (`KafkaLogger::event(...)->message(...)->info()->send()`) for custom business events and audit trails.
-- **Smart Config Defaults**: `appName`, `environment`, `topic`, `component`, and `actor` automatically fall back to your `.env` / config settings so you only write what you need.
+- **Smart Config Defaults**: `appCode`, `environment`, `topic`, `component`, and `actor` automatically fall back to your `.env` / config settings so you only write what you need.
 - **Contract Schema Validation**: Validates every payload against the Enterprise CLS JSON contract before publishing to Kafka.
 
 ---
@@ -66,7 +66,7 @@ While authentication and general errors are handled automatically, you can manua
 
 ### Minimal Example (Using Smart Defaults)
 
-Because `appName`, `environment`, `topic`, `component`, and `actor` have defaults configured, **only `event()` and `message()` are required**:
+Because `appCode`, `environment`, `topic`, `component`, and `actor` have defaults configured, **only `event()` and `message()` are required**:
 
 ```php
 use Mimon\KafkaLogger\Facades\KafkaLogger;
@@ -159,7 +159,8 @@ KafkaLogger::event('VOUCHER_BALANCE_MISMATCH')
 | `->actor(string $userId, ?string $role = null)` | Optional | Sets the user ID and role in `UPPER_SNAKE_CASE`. Alias: `->user()`. | `'usr_system'` / `'SYSTEM'` |
 | `->withMetadata(array $data)` | Optional | Attaches custom key-value context. Alias: `->withContext()`. | `[]` |
 | `->withException(Throwable $e)` | Optional | Extracts `error.code` and `error.stack_trace` from an exception. | `null` |
-| `->appName(string $name)` | Optional | Overrides the application name for this log entry. | `config('kafka-logger.app_name')` |
+| `->appCode(string $code)` | Optional | Overrides the application code (e.g. `CFNR_L`, `HR_APP`). Alias: `->appName()`. | `config('kafka-logger.app_code')` |
+| `->appName(string $name)` | Optional | Overrides the application name/code for this log entry. | `config('kafka-logger.app_name')` |
 | `->environment(Environment\|string $env)` | Optional | Overrides environment (`LOCAL`, `DEVELOPMENT`, `STAGING`, `PRODUCTION`). | `config('kafka-logger.environment')` |
 | `->topic(string $topic)` | Optional | Overrides the target Kafka topic for this log entry. | `config('kafka-logger.default_topic')` |
 | `->send()` / `->dispatch()` / `->log()` | **Yes** | Validates the payload and dispatches it to Kafka. | — |
@@ -267,7 +268,8 @@ Every message emitted to Kafka strictly follows this enterprise schema:
 
 | Key | Default | Description |
 | :--- | :--- | :--- |
-| `KAFKA_LOGGER_APP_NAME` | `'HR_APP'` | Enterprise identifier for the microservice |
+| `KAFKA_LOGGER_APP_CODE` | `'HR_APP'` | Enterprise application code for the microservice (e.g. `CFNR_L`, `TKS`, `HR_APP`) |
+| `KAFKA_LOGGER_APP_NAME` | `'HR_APP'` | (Optional alias) Enterprise identifier for the microservice |
 | `KAFKA_LOGGER_ENVIRONMENT` | `'LOCAL'` | `LOCAL`, `DEVELOPMENT`, `STAGING`, or `PRODUCTION` |
 | `KAFKA_LOGGER_DEFAULT_TOPIC` | `'YOUR_TOPIC'` | Fallback Kafka topic |
 | `KAFKA_LOGGER_PRODUCE` | `true` | Set to `false` in local testing to disable Kafka transmission |

@@ -15,6 +15,8 @@ class KafkaLogBuilder
 
     protected LogLevel|string $logLevel = LogLevel::INFO;
 
+    protected ?string $customAppCode = null;
+
     protected ?string $customAppName = null;
 
     protected Environment|string|null $customEnvironment = null;
@@ -108,9 +110,19 @@ class KafkaLogBuilder
         return $this;
     }
 
+    public function appCode(string $appCode): self
+    {
+        $this->customAppCode = $appCode;
+
+        return $this;
+    }
+
     public function appName(string $appName): self
     {
         $this->customAppName = $appName;
+        if ($this->customAppCode === null) {
+            $this->customAppCode = $appName;
+        }
 
         return $this;
     }
@@ -178,7 +190,8 @@ class KafkaLogBuilder
             : (str_replace(['.', '-', '_'], ' ', $eventType) . ' event.');
 
         $options = [
-            'app_name' => $this->customAppName,
+            'app_code' => $this->customAppCode ?? $this->customAppName,
+            'app_name' => $this->customAppName ?? $this->customAppCode,
             'environment' => $this->customEnvironment,
             'component' => $this->customComponent,
             'topic' => $this->customTopic,

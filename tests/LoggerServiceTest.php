@@ -36,11 +36,27 @@ class LoggerServiceTest extends TestCase
         );
 
         $this->assertNotEmpty($payload);
+        $this->assertSame('HR_APP', $payload['application']['code']);
         $this->assertSame('HR_APP', $payload['application']['name']);
         $this->assertSame('EMPLOYEE_CREATED', $payload['event']['type']);
         $this->assertSame('HR.EMPLOYEE.EVENTS', $payload['event']['topic']);
         $this->assertSame('New employee onboarded', $payload['event']['message']);
         $this->assertSame('usr_101', $payload['actor']['user_id']);
+    }
+
+    public function test_create_enterprise_log_with_app_code(): void
+    {
+        $payload = LoggerService::createEnterpriseLog(
+            appCode: 'CFNR_L',
+            eventType: 'FOREST_RECORD_UPDATED',
+            message: 'Updated inventory record',
+            level: LogLevel::INFO,
+        );
+
+        $this->assertNotEmpty($payload);
+        $this->assertSame('CFNR_L', $payload['application']['code']);
+        $this->assertSame('CFNR_L', $payload['application']['name']);
+        $this->assertSame('FOREST_RECORD_UPDATED', $payload['event']['type']);
     }
 
     public function test_topic_name_is_sanitized_to_valid_kafka_characters(): void

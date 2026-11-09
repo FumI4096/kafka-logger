@@ -16,9 +16,9 @@ class LoggerService
     public const CIRCUIT_CACHE_KEY = 'mimon_kafka_logger:circuit_open';
 
     public static function createEnterpriseLog(
-        string $appName,
-        string $eventType,
-        string $message,
+        ?string $appCode = null,
+        string $eventType = 'SYSTEM_EVENT',
+        string $message = '',
         LogLevel|string $level = LogLevel::INFO,
         ComponentSubsystem|string $component = ComponentSubsystem::APPLICATION_LOGIC,
         ?string $topic = null,
@@ -26,8 +26,11 @@ class LoggerService
         ?string $userRole = null,
         ?array $metadata = null,
         ?\Throwable $exception = null,
-        Environment|string|null $environment = null
+        Environment|string|null $environment = null,
+        ?string $appName = null
     ): array {
+        $resolvedAppCode = $appCode ?? $appName ?? (string) PayloadSanitizer::config('kafka-logger.app_code', PayloadSanitizer::config('kafka-logger.app_name', 'HR_APP'));
+        $resolvedAppName = $appName ?? $appCode ?? $resolvedAppCode;
         $logId = (string) Str::uuid();
         $traceId = static::resolveTraceId(static::requestHeader('x-trace-id'));
         $spanId = 'sp-' . Str::random(6);
@@ -70,7 +73,8 @@ class LoggerService
             'log_id' => $logId,
             'environment' => is_string($resolvedEnv) ? $resolvedEnv : $resolvedEnv->value,
             'application' => [
-                'name' => strtoupper(str_replace('-', '_', $appName)),
+                'code' => strtoupper(str_replace(['-', ' '], '_', $resolvedAppCode)),
+                'name' => strtoupper(str_replace(['-', ' '], '_', $resolvedAppName)),
                 'component' => is_string($resolvedComponent) ? $resolvedComponent : $resolvedComponent->value,
                 'host_ip' => static::hostIp(),
                 'host_name' => gethostname() ?: 'unknown-host',

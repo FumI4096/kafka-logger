@@ -12,7 +12,8 @@ return [
     |
     */
 
-    'app_name' => env('KAFKA_LOGGER_APP_NAME', 'HR_APP'),
+    'app_code' => env('KAFKA_LOGGER_APP_CODE', env('KAFKA_LOGGER_APP_NAME', 'HR_APP')),
+    'app_name' => env('KAFKA_LOGGER_APP_NAME', env('KAFKA_LOGGER_APP_CODE', 'HR_APP')),
 
     // PRODUCTION | STAGING | DEVELOPMENT | LOCAL
     'environment' => env('KAFKA_LOGGER_ENVIRONMENT', 'LOCAL'),

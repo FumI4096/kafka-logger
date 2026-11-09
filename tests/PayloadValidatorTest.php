@@ -17,6 +17,7 @@ class PayloadValidatorTest extends TestCase
             'log_id' => (string) Str::uuid(),
             'environment' => Environment::PRODUCTION->value,
             'application' => [
+                'code' => 'HR_APP',
                 'name' => 'HR_APP',
                 'component' => ComponentSubsystem::DATABASE->value,
                 'host_ip' => '10.200.4.15',
@@ -62,5 +63,38 @@ class PayloadValidatorTest extends TestCase
         $errors = PayloadValidator::validate($invalidPayload);
         $this->assertNotEmpty($errors);
         $this->assertFalse(PayloadValidator::isValid($invalidPayload));
+    }
+
+    public function test_invalid_app_code_fails_validation(): void
+    {
+        $payload = [
+            'log_id' => (string) Str::uuid(),
+            'environment' => Environment::LOCAL->value,
+            'application' => [
+                'code' => 'invalid-code-lowercase',
+                'component' => ComponentSubsystem::APPLICATION_LOGIC->value,
+                'host_ip' => '127.0.0.1',
+            ],
+            'event' => [
+                'type' => 'TEST_EVENT',
+                'level' => LogLevel::INFO->value,
+                'topic' => 'TEST.TOPIC',
+                'message' => 'Test message',
+            ],
+            'trace' => [
+                'trace_id' => 'tr-123456',
+            ],
+            'actor' => [
+                'user_id' => 'usr_1',
+            ],
+            'timestamps' => [
+                'created_at' => date('c'),
+                'produced_at' => date('c'),
+            ],
+        ];
+
+        $errors = PayloadValidator::validate($payload);
+        $this->assertContains("Field 'application.code' must be in UPPER_SNAKE_CASE (e.g. HR_APP, CFNR_L).", $errors);
+        $this->assertFalse(PayloadValidator::isValid($payload));
     }
 }

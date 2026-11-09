@@ -12,6 +12,8 @@ use Throwable;
 
 class KafkaLoggerService
 {
+    protected string $appCode;
+
     protected string $appName;
 
     protected string $environment;
@@ -22,7 +24,8 @@ class KafkaLoggerService
 
     public function __construct()
     {
-        $this->appName = config('kafka-logger.app_name', 'HR_APP');
+        $this->appCode = (string) (config('kafka-logger.app_code') ?: config('kafka-logger.app_name', 'HR_APP'));
+        $this->appName = $this->appCode;
         $this->environment = config('kafka-logger.environment', 'LOCAL');
         $this->defaultTopic = config('kafka-logger.default_topic', 'YOUR_TOPIC');
         $this->autoValidate = (bool) config('kafka-logger.auto_validate', true);
@@ -131,7 +134,7 @@ class KafkaLoggerService
         LogLevel|string $level = LogLevel::INFO,
         array $options = []
     ): array {
-        $appName = $options['app_name'] ?? $this->appName;
+        $appCode = $options['app_code'] ?? $options['app_name'] ?? $this->appCode;
         $env = $options['environment'] ?? $this->environment;
         $component = $options['component'] ?? ComponentSubsystem::APPLICATION_LOGIC;
         $topic = $options['topic'] ?? $this->defaultTopic;
@@ -141,7 +144,7 @@ class KafkaLoggerService
         $exception = $options['exception'] ?? null;
 
         return LoggerService::createEnterpriseLog(
-            appName: $appName,
+            appCode: $appCode,
             eventType: $eventType,
             message: $message,
             level: $level,
@@ -151,7 +154,8 @@ class KafkaLoggerService
             userRole: $userRole,
             metadata: $metadata,
             exception: $exception,
-            environment: $env
+            environment: $env,
+            appName: $appCode
         );
     }
 }
