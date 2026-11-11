@@ -135,6 +135,7 @@ class KafkaLoggerService
         array $options = []
     ): array {
         $appCode = $options['app_code'] ?? $options['app_name'] ?? $this->appCode;
+        $appName = $options['app_name'] ?? $options['app_code'] ?? $this->appName;
         $env = $options['environment'] ?? $this->environment;
         $component = $options['component'] ?? ComponentSubsystem::APPLICATION_LOGIC;
         $topic = $options['topic'] ?? $this->defaultTopic;
