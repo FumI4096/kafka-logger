@@ -24,8 +24,8 @@ class KafkaLoggerService
 
     public function __construct()
     {
-        $this->appCode = (string) (config('kafka-logger.app_code') ?: config('kafka-logger.app_name', 'HR_APP'));
-        $this->appName = $this->appCode;
+        $this->appCode = (string) config('kafka-logger.app_code');
+        $this->appName = (string) config('kafka-logger.app_name', $this->appCode);
         $this->environment = config('kafka-logger.environment', 'LOCAL');
         $this->defaultTopic = config('kafka-logger.default_topic', 'YOUR_TOPIC');
         $this->autoValidate = (bool) config('kafka-logger.auto_validate', true);
