@@ -29,7 +29,6 @@ class LogAuthenticationEvents
                 'name'       => $user->name ?? null,
                 'guard'      => $event->guard,
                 'remember'   => $event->remember,
-                'ip_address' => request()?->ip(),
                 'user_agent' => request()?->userAgent(),
             ];
 
@@ -46,7 +45,7 @@ class LogAuthenticationEvents
             }
 
             KafkaLogger::event('USER_LOGIN')
-                ->message("User {$email} logged into {$appCode}.")
+                ->message("User {$userId} logged into {$appCode}.")
                 ->info()
                 ->component(ComponentSubsystem::AUTHENTICATION)
                 ->actor($userId, $role)
@@ -80,7 +79,6 @@ class LogAuthenticationEvents
                     'attempted_identifier_hash' => $identifier !== '' ? PayloadSanitizer::hashIdentifier($identifier) : null,
                     'identifier_hint'           => $identifier !== '' ? PayloadSanitizer::identifierHint($identifier) : null,
                     'guard'                     => $event->guard,
-                    'ip_address'                => request()?->ip(),
                     'user_agent'                => mb_substr((string) request()?->userAgent(), 0, 255),
                 ])
                 ->send();
@@ -106,7 +104,7 @@ class LogAuthenticationEvents
             $appCode = config('kafka-logger.app_code', config('kafka-logger.app_name', 'APPLICATION'));
 
             KafkaLogger::event('USER_LOGOUT')
-                ->message("User {$email} logged out of {$appCode}.")
+                ->message("User {$userId} logged out of {$appCode}.")
                 ->info()
                 ->component(ComponentSubsystem::AUTHENTICATION)
                 ->actor($userId, $role)
@@ -114,7 +112,6 @@ class LogAuthenticationEvents
                     'user_id'    => $user->getAuthIdentifier(),
                     'email'      => $user->email ?? null,
                     'guard'      => $event->guard,
-                    'ip_address' => request()?->ip(),
                 ])
                 ->send();
         } catch (\Throwable $e) {
