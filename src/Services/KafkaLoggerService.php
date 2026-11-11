@@ -155,7 +155,7 @@ class KafkaLoggerService
             metadata: $metadata,
             exception: $exception,
             environment: $env,
-            appName: $appCode
+            appName: $appName
         );
     }
 }
