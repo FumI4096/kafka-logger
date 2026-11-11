@@ -43,9 +43,9 @@ Once installed, `mimon/kafka-logger` automatically runs two background listeners
 
 ### A. Automatic Authentication Logs (`LogAuthenticationEvents`)
 Enabled via `KAFKA_LOGGER_AUTO_LOG_AUTH=true` (default). Automatically dispatches `ComponentSubsystem::AUTHENTICATION` logs whenever a user logs in, fails login, or logs out:
-- **`USER_LOGIN`** (`INFO`): Captures user ID, email, name, guard, IP address, user agent, Spatie/Shield roles (`getRoleNames()`), and office metadata.
-- **`USER_LOGIN_FAILED`** (`WARNING`): Captures attempted email/username, guard, IP address, and user agent.
-- **`USER_LOGOUT`** (`INFO`): Captures user ID, email, guard, and IP address.
+- **`USER_LOGIN`** (`INFO`): Captures user ID, email, name, guard user agent, Spatie/Shield roles (`getRoleNames()`), and office metadata.
+- **`USER_LOGIN_FAILED`** (`WARNING`): Captures attempted email/username, guard, and user agent.
+- **`USER_LOGOUT`** (`INFO`): Captures user ID, email, and guard.
 
 > **Tip — Custom User Metadata**: Implement `public function toKafkaLogMetadata(): array` on your `User` model to automatically merge extra user fields into every login log.
 
