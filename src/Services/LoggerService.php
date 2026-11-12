@@ -15,6 +15,13 @@ class LoggerService
 {
     public const CIRCUIT_CACHE_KEY = 'mimon_kafka_logger:circuit_open';
 
+    /**
+     * In-memory sliding window samples for producer throughput calculation: [['ts_ms' => int, 'bytes' => int], ...]
+     *
+     * @var array<int, array{ts_ms: int, bytes: int}>
+     */
+    protected static array $throughputWindow = [];
+
     public static function createEnterpriseLog(
         ?string $appCode = null,
         string $eventType = 'SYSTEM_EVENT',
@@ -56,6 +63,7 @@ class LoggerService
         }
 
         $now = Carbon::now();
+        $createdAtMs = (int) $now->getPreciseTimestamp(3);
 
         $errorCode = null;
         $stackTrace = null;
@@ -68,6 +76,10 @@ class LoggerService
                 (int) PayloadSanitizer::config('kafka-logger.max_trace_frames', 25)
             );
         }
+
+        $producedNow = Carbon::now();
+        $producedAtMs = max($createdAtMs, (int) $producedNow->getPreciseTimestamp(3));
+        $produceLatencyMs = max(0, $producedAtMs - $createdAtMs);
 
         $payload = [
             'log_id' => $logId,
@@ -96,7 +108,10 @@ class LoggerService
             ],
             'timestamps' => [
                 'created_at' => $now->toIso8601String(),
-                'produced_at' => $now->copy()->toIso8601String(),
+                'produced_at' => $producedNow->toIso8601String(),
+                'created_at_ms' => $createdAtMs,
+                'produced_at_ms' => $producedAtMs,
+                'produce_latency_ms' => $produceLatencyMs,
             ],
             'error' => [
                 'code' => $errorCode,
@@ -109,6 +124,8 @@ class LoggerService
             $payload,
             (int) PayloadSanitizer::config('kafka-logger.max_payload_bytes', 900000)
         );
+
+        $payload['telemetry'] = static::computeProducerTelemetry($payload, $producedAtMs);
 
         if (PayloadSanitizer::config('kafka-logger.auto_validate', true)) {
             $errors = PayloadValidator::validate($payload);
@@ -177,12 +194,64 @@ class LoggerService
                 $producer = $producer->withFlushTimeout($timeoutMs);
             }
 
+            // Refresh produced_at_ms right before broker send (captures queue delay when async=true)
+            $publishNow = Carbon::now();
+            $producedAtMs = (int) $publishNow->getPreciseTimestamp(3);
+            $createdAtMs = (int) ($payload['timestamps']['created_at_ms'] ?? $producedAtMs);
+            $payload['timestamps']['produced_at'] = $publishNow->toIso8601String();
+            $payload['timestamps']['produced_at_ms'] = $producedAtMs;
+            $payload['timestamps']['produce_latency_ms'] = max(0, $producedAtMs - $createdAtMs);
+
             $producer->withBody($payload)->withHeaders($headers)->send();
         } catch (\Throwable $e) {
             static::openCircuit();
             // WARNING level + prefix: ignored by LogErrorEvents, so this can never loop.
             static::warn('Kafka broker publish skipped: ' . PayloadSanitizer::redactString($e->getMessage()));
         }
+    }
+
+    /**
+     * Compute producer-side telemetry: payload byte size, rolling events/sec, and rolling MB/sec.
+     *
+     * @return array{payload_bytes: int, producer_events_per_sec: float, producer_mb_per_sec: float}
+     */
+    public static function computeProducerTelemetry(array $payload, ?int $nowMs = null): array
+    {
+        $nowMs = $nowMs ?? (int) Carbon::now()->getPreciseTimestamp(3);
+        $payloadBytes = strlen((string) json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR));
+
+        // Prune samples older than 10 seconds (10,000 ms)
+        $cutoffMs = $nowMs - 10000;
+        static::$throughputWindow = array_values(array_filter(
+            static::$throughputWindow,
+            static fn (array $sample): bool => $sample['ts_ms'] >= $cutoffMs
+        ));
+
+        static::$throughputWindow[] = [
+            'ts_ms' => $nowMs,
+            'bytes' => $payloadBytes,
+        ];
+
+        // Cap memory array to at most 1,000 recent samples
+        if (count(static::$throughputWindow) > 1000) {
+            static::$throughputWindow = array_slice(static::$throughputWindow, -1000);
+        }
+
+        $sampleCount = count(static::$throughputWindow);
+        $totalBytes = array_sum(array_column(static::$throughputWindow, 'bytes'));
+        $oldestMs = static::$throughputWindow[0]['ts_ms'] ?? $nowMs;
+        $windowSec = max(1.0, ($nowMs - $oldestMs) / 1000.0);
+
+        return [
+            'payload_bytes' => $payloadBytes,
+            'producer_events_per_sec' => round($sampleCount / $windowSec, 2),
+            'producer_mb_per_sec' => round(($totalBytes / 1048576) / $windowSec, 4),
+        ];
+    }
+
+    public static function resetThroughputWindow(): void
+    {
+        static::$throughputWindow = [];
     }
 
     /**
