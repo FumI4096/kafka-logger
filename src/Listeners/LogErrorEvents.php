@@ -41,7 +41,11 @@ class LogErrorEvents
         }
 
         $message = (string) ($event->message ?? '');
-        if (str_starts_with($message, 'mimon/kafka-logger:')) {
+        if (
+            str_starts_with($message, 'mimon/kafka-logger:')
+            || str_contains($message, 'insert into "system_logs"')
+            || str_contains($message, 'insert into "kafka_pipeline_metrics"')
+        ) {
             return;
         }
 
