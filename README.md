@@ -210,8 +210,6 @@ KafkaLogger::event('EMPLOYEE_CREATED')
 | :--- | :--- | :--- |
 | `ComponentSubsystem::APPLICATION_LOGIC` | `'APPLICATION_LOGIC'` | Business logic, Filament resources/actions, controllers, services |
 | `ComponentSubsystem::DATABASE` | `'DATABASE'` | Eloquent models, PostgreSQL/MySQL queries, transactions |
-| `ComponentSubsystem::KAFKA_PRODUCER` | `'KAFKA_PRODUCER'` | Outbound Kafka event publishing |
-| `ComponentSubsystem::KAFKA_CONSUMER` | `'KAFKA_CONSUMER'` | Inbound Kafka event processing |
 | `ComponentSubsystem::QUEUE_JOB` | `'QUEUE_JOB'` | Asynchronous Laravel queue workers and background jobs |
 | `ComponentSubsystem::STORAGE` | `'STORAGE'` | File uploads, PDF generation, S3, or local disk operations |
 | `ComponentSubsystem::EXTERNAL_API` | `'EXTERNAL_API'` | HTTP client (`Http::get/post`) calls, third-party webhooks |
