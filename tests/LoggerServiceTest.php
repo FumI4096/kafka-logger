@@ -148,4 +148,10 @@ class LoggerServiceTest extends TestCase
         $this->assertNotSame("malicious\r\nHeader: inject<script>", $maliciousTrace);
         $this->assertStringStartsWith('tr-', $maliciousTrace);
     }
+
+    public function test_resolve_target_topics_supports_explicit_and_default_topic(): void
+    {
+        $this->assertSame(['CUSTOM.topic'], LoggerService::resolveTargetTopics('CUSTOM.topic'));
+        $this->assertSame(['YOUR_TOPIC'], LoggerService::resolveTargetTopics(null));
+    }
 }

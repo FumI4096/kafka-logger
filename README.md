@@ -269,8 +269,12 @@ Every message emitted to Kafka strictly follows this enterprise schema:
 | `KAFKA_LOGGER_APP_CODE` | `'HR_APP'` | Enterprise application code for the microservice (e.g. `CFNR_L`, `TKS`, `HR_APP`) |
 | `KAFKA_LOGGER_APP_NAME` | `'HR_APP'` | (Optional alias) Enterprise identifier for the microservice |
 | `KAFKA_LOGGER_ENVIRONMENT` | `'LOCAL'` | `LOCAL`, `DEVELOPMENT`, `STAGING`, or `PRODUCTION` |
-| `KAFKA_LOGGER_DEFAULT_TOPIC` | `'YOUR_TOPIC'` | Fallback Kafka topic |
+| `KAFKA_LOGGER_DEFAULT_TOPIC` | `'YOUR_TOPIC'` | Fallback Kafka topic when `PRODUCE_LOCAL` / `PRODUCE_LIVE` are unset |
 | `KAFKA_LOGGER_PRODUCE` | `true` | Set to `false` in local testing to disable Kafka transmission |
+| `KAFKA_LOGGER_PRODUCE_LOCAL` | `null` | Set `true` to publish to `KAFKA_LOGGER_LOCAL_TOPIC` (can be combined with `PRODUCE_LIVE`) |
+| `KAFKA_LOGGER_LOCAL_TOPIC` | `null` | Developer-supplied local target topic (e.g. `CLS.LOCAL.logs`) |
+| `KAFKA_LOGGER_PRODUCE_LIVE` | `null` | Set `true` to publish to `KAFKA_LOGGER_LIVE_TOPIC` (can be combined with `PRODUCE_LOCAL`) |
+| `KAFKA_LOGGER_LIVE_TOPIC` | `null` | Developer-supplied live target topic (e.g. `CLS.LIVE.logs`) |
 | `KAFKA_LOGGER_AUTO_LOG_AUTH` | `true` | Automatically listen to Laravel authentication events |
 | `KAFKA_LOGGER_AUTO_LOG_ERRORS` | `true` | Automatically listen to error logs and failed jobs |
 | `KAFKA_LOGGER_CONTEXT_MODE` | `'redact'` | `'redact'` (sanitize keys), `'allowlist'`, or `'none'` |

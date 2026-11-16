@@ -54,8 +54,8 @@ class LoggerService
             ? (ComponentSubsystem::tryFrom(strtoupper($component)) ?? strtoupper($component))
             : $component;
 
-        $rawTopic = $topic ?? PayloadSanitizer::config('kafka-logger.default_topic', 'YOUR_TOPIC');
-        $formattedTopic = substr((string) preg_replace('/[^a-zA-Z0-9._-]/', '_', $rawTopic), 0, 249) ?: 'YOUR_TOPIC';
+        $targetTopics = static::resolveTargetTopics($topic);
+        $formattedTopic = $targetTopics[0] ?? static::sanitizeTopicName((string) PayloadSanitizer::config('kafka-logger.default_topic', 'YOUR_TOPIC'));
 
         $cleanMessage = PayloadSanitizer::redactString($message);
         if (trim($cleanMessage) === '') {
@@ -140,12 +140,59 @@ class LoggerService
             }
         }
 
-        static::publish($formattedTopic, $payload, [
-            'x-trace-id' => $traceId,
-            'x-log-id' => $logId,
-        ]);
+        foreach ($targetTopics as $targetTopic) {
+            $topicPayload = $payload;
+            $topicPayload['event']['topic'] = $targetTopic;
+
+            static::publish($targetTopic, $topicPayload, [
+                'x-trace-id' => $traceId,
+                'x-log-id' => $logId,
+            ]);
+        }
 
         return $payload;
+    }
+
+    /**
+     * Resolve target Kafka topics based on explicit override, local/live flags, or default_topic.
+     *
+     * @return array<int, string>
+     */
+    public static function resolveTargetTopics(?string $explicitTopic = null): array
+    {
+        if ($explicitTopic !== null && trim($explicitTopic) !== '') {
+            return [static::sanitizeTopicName($explicitTopic)];
+        }
+
+        $produceLocal = PayloadSanitizer::config('kafka-logger.produce_local', null);
+        $produceLive = PayloadSanitizer::config('kafka-logger.produce_live', null);
+
+        if ($produceLocal !== null || $produceLive !== null) {
+            $topics = [];
+
+            if (filter_var($produceLocal, FILTER_VALIDATE_BOOLEAN)) {
+                $localTopic = trim((string) PayloadSanitizer::config('kafka-logger.local_topic', ''));
+                if ($localTopic !== '') {
+                    $topics[] = static::sanitizeTopicName($localTopic);
+                }
+            }
+
+            if (filter_var($produceLive, FILTER_VALIDATE_BOOLEAN)) {
+                $liveTopic = trim((string) PayloadSanitizer::config('kafka-logger.live_topic', ''));
+                if ($liveTopic !== '') {
+                    $topics[] = static::sanitizeTopicName($liveTopic);
+                }
+            }
+
+            return array_values(array_unique($topics));
+        }
+
+        return [static::sanitizeTopicName((string) PayloadSanitizer::config('kafka-logger.default_topic', 'YOUR_TOPIC'))];
+    }
+
+    protected static function sanitizeTopicName(string $rawTopic): string
+    {
+        return substr((string) preg_replace('/[^a-zA-Z0-9._-]/', '_', $rawTopic), 0, 249) ?: 'YOUR_TOPIC';
     }
 
     /**
