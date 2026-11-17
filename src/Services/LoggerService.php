@@ -184,7 +184,9 @@ class LoggerService
                 }
             }
 
-            return array_values(array_unique($topics));
+            if (! empty($topics)) {
+                return array_values(array_unique($topics));
+            }
         }
 
         return [static::sanitizeTopicName((string) PayloadSanitizer::config('kafka-logger.default_topic', 'YOUR_TOPIC'))];
