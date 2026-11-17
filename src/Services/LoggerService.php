@@ -13,6 +13,8 @@ use Mimon\KafkaLogger\Support\SafeTrace;
 
 class LoggerService
 {
+    public const PACKAGE_VERSION = '1.2.4';
+
     public const CIRCUIT_CACHE_KEY = 'mimon_kafka_logger:circuit_open';
 
     /**
@@ -404,7 +406,23 @@ class LoggerService
             'payload_bytes' => $payloadBytes,
             'producer_events_per_sec' => round($sampleCount / $windowSec, 2),
             'producer_mb_per_sec' => round(($totalBytes / 1048576) / $windowSec, 4),
+            'logger_version' => static::resolvePackageVersion(),
         ];
+    }
+
+    public static function resolvePackageVersion(): string
+    {
+        try {
+            if (class_exists('\Composer\InstalledVersions') && \Composer\InstalledVersions::isInstalled('mimon/kafka-logger')) {
+                $pretty = (string) (\Composer\InstalledVersions::getPrettyVersion('mimon/kafka-logger') ?? '');
+                if (preg_match('/^v?\d+\.\d+\.\d+/', $pretty)) {
+                    return ltrim($pretty, 'v');
+                }
+            }
+        } catch (\Throwable) {
+        }
+
+        return self::PACKAGE_VERSION;
     }
 
     public static function resetThroughputWindow(): void
