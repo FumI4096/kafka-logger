@@ -9,6 +9,7 @@ use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
+use Mimon\KafkaLogger\Console\Commands\InstallKafkaLoggerCommand;
 use Mimon\KafkaLogger\Listeners\LogAuthenticationEvents;
 use Mimon\KafkaLogger\Listeners\LogErrorEvents;
 use Mimon\KafkaLogger\Services\KafkaLoggerService;
@@ -35,6 +36,10 @@ class KafkaLoggerServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__ . '/../../config/kafka-logger.php' => config_path('kafka-logger.php'),
             ], 'kafka-logger-config');
+
+            $this->commands([
+                InstallKafkaLoggerCommand::class,
+            ]);
         }
 
         if (config('kafka-logger.auto_log_auth', true)) {

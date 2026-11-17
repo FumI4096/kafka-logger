@@ -15,8 +15,8 @@ return [
     'app_code' => env('KAFKA_LOGGER_APP_CODE', env('KAFKA_LOGGER_APP_NAME', 'HR_APP')),
     'app_name' => env('KAFKA_LOGGER_APP_NAME', env('KAFKA_LOGGER_APP_CODE', 'HR_APP')),
 
-    // PRODUCTION | STAGING | DEVELOPMENT | LOCAL
-    'environment' => env('KAFKA_LOGGER_ENVIRONMENT', 'LOCAL'),
+    // PRODUCTION | STAGING | DEVELOPMENT | LOCAL (defaults to uppercase APP_ENV)
+    'environment' => strtoupper((string) (env('KAFKA_LOGGER_ENVIRONMENT') ?: env('APP_ENV', 'production'))),
 
     'default_topic' => env('KAFKA_LOGGER_DEFAULT_TOPIC', 'YOUR_TOPIC'),
 
