@@ -118,4 +118,23 @@ return [
     'circuit_breaker_seconds' => env('KAFKA_LOGGER_CIRCUIT_BREAKER_SECONDS', 30),
 
     'async' => env('KAFKA_LOGGER_ASYNC', false),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Error Rate Limiting (Per-Signature Deduplication)
+    |--------------------------------------------------------------------------
+    |
+    | Prevents identical repeated errors from flooding Kafka. After rate_limit_max
+    | occurrences within rate_limit_seconds, further duplicates are suppressed
+    | until the window resets (0 = disabled).
+    |
+    */
+    'rate_limit_max' => (int) env('KAFKA_LOGGER_RATE_LIMIT_MAX', 5),
+
+    'rate_limit_seconds' => (int) env('KAFKA_LOGGER_RATE_LIMIT_SECONDS', 60),
+
+    'rate_limit_levels' => array_values(array_filter(array_map(
+        static fn (string $lvl): string => strtoupper(trim($lvl)),
+        explode(',', (string) env('KAFKA_LOGGER_RATE_LIMIT_LEVELS', 'ERROR,CRITICAL'))
+    ))),
 ];

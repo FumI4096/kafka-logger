@@ -140,6 +140,10 @@ class LoggerService
             }
         }
 
+        if (static::shouldSuppressByRateLimit($payload)) {
+            return [];
+        }
+
         foreach ($targetTopics as $targetTopic) {
             $topicPayload = $payload;
             $topicPayload['event']['topic'] = $targetTopic;
@@ -190,6 +194,111 @@ class LoggerService
         }
 
         return [static::sanitizeTopicName((string) PayloadSanitizer::config('kafka-logger.default_topic', 'YOUR_TOPIC'))];
+    }
+
+    /**
+     * Suppress repeated identical error logs after N occurrences within a rolling window.
+     */
+    protected static function shouldSuppressByRateLimit(array &$payload): bool
+    {
+        $max = (int) PayloadSanitizer::config('kafka-logger.rate_limit_max', 5);
+        $window = (int) PayloadSanitizer::config('kafka-logger.rate_limit_seconds', 60);
+        if ($max <= 0 || $window <= 0) {
+            return false;
+        }
+
+        $level = strtoupper((string) ($payload['event']['level'] ?? 'INFO'));
+        $rawLevels = PayloadSanitizer::config('kafka-logger.rate_limit_levels', ['ERROR', 'CRITICAL']);
+        $levels = is_array($rawLevels)
+            ? array_map(static fn ($l): string => strtoupper(trim((string) $l)), $rawLevels)
+            : array_filter(array_map(static fn ($l): string => strtoupper(trim($l)), explode(',', (string) $rawLevels)));
+
+        if (! in_array($level, $levels, true)) {
+            return false;
+        }
+
+        $appCode = (string) ($payload['application']['code'] ?? '');
+        $eventType = (string) ($payload['event']['type'] ?? '');
+        $component = (string) ($payload['application']['component'] ?? '');
+        $errorCode = (string) ($payload['error']['code'] ?? '');
+        $normalizedMessage = substr(
+            (string) preg_replace('/\b\d+\b/', '#', (string) ($payload['event']['message'] ?? '')),
+            0,
+            200
+        );
+
+        $fingerprint = sha1("{$appCode}|{$level}|{$eventType}|{$component}|{$errorCode}|{$normalizedMessage}");
+        $windowKey = "kafka_logger:rl:{$fingerprint}";
+        $suppressedKey = "kafka_logger:rl_suppressed:{$fingerprint}";
+
+        $now = time();
+        $entry = static::cacheGet($windowKey);
+        if (! is_array($entry) || ($entry['expires_at'] ?? 0) <= $now) {
+            $entry = [
+                'count' => 1,
+                'expires_at' => $now + $window,
+            ];
+            static::cachePut($windowKey, $entry, $window);
+
+            $suppressed = (int) static::cacheGet($suppressedKey, 0);
+            if ($suppressed > 0) {
+                $payload['metadata'] = is_array($payload['metadata'] ?? null) ? $payload['metadata'] : [];
+                $payload['metadata']['_suppressed_duplicates'] = $suppressed;
+                static::cacheForget($suppressedKey);
+            }
+
+            return false;
+        }
+
+        $entry['count'] = ((int) ($entry['count'] ?? 0)) + 1;
+        $remaining = max(1, (int) $entry['expires_at'] - $now);
+        static::cachePut($windowKey, $entry, $remaining);
+
+        if ($entry['count'] > $max) {
+            $suppressed = (int) static::cacheGet($suppressedKey, 0) + 1;
+            static::cachePut($suppressedKey, $suppressed, max($window * 5, 300));
+
+            return true;
+        }
+
+        if ($entry['count'] === $max) {
+            $payload['metadata'] = is_array($payload['metadata'] ?? null) ? $payload['metadata'] : [];
+            $payload['metadata']['_rate_limit_notice'] = "Threshold reached ({$max}/{$window}s); further identical events suppressed for {$remaining}s.";
+        }
+
+        return false;
+    }
+
+    protected static function cacheGet(string $key, mixed $default = null): mixed
+    {
+        try {
+            if (class_exists('\Illuminate\Support\Facades\Cache')) {
+                return \Illuminate\Support\Facades\Cache::get($key, $default);
+            }
+        } catch (\Throwable) {
+        }
+
+        return $default;
+    }
+
+    protected static function cachePut(string $key, mixed $value, int $seconds): void
+    {
+        try {
+            if (class_exists('\Illuminate\Support\Facades\Cache')) {
+                \Illuminate\Support\Facades\Cache::put($key, $value, $seconds);
+            }
+        } catch (\Throwable) {
+        }
+    }
+
+    protected static function cacheForget(string $key): void
+    {
+        try {
+            if (class_exists('\Illuminate\Support\Facades\Cache')) {
+                \Illuminate\Support\Facades\Cache::forget($key);
+            }
+        } catch (\Throwable) {
+        }
     }
 
     protected static function sanitizeTopicName(string $rawTopic): string
