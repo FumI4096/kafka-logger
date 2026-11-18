@@ -26,8 +26,8 @@ class KafkaLoggerService
     {
         $this->appCode = (string) config('kafka-logger.app_code');
         $this->appName = (string) config('kafka-logger.app_name', $this->appCode);
-        $this->environment = config('kafka-logger.environment', 'LOCAL');
-        $this->defaultTopic = config('kafka-logger.default_topic', 'YOUR_TOPIC');
+        $this->environment = (string) (config('kafka-logger.environment') ?: 'LOCAL');
+        $this->defaultTopic = (string) (config('kafka-logger.default_topic') ?: 'CLS.LIVE.logs');
         $this->autoValidate = (bool) config('kafka-logger.auto_validate', true);
     }
 
@@ -138,7 +138,7 @@ class KafkaLoggerService
         $appName = $options['app_name'] ?? $options['app_code'] ?? $this->appName;
         $env = $options['environment'] ?? $this->environment;
         $component = $options['component'] ?? ComponentSubsystem::APPLICATION_LOGIC;
-        $topic = $options['topic'] ?? $this->defaultTopic;
+        $topic = $options['topic'] ?? null;
         $userId = $options['user_id'] ?? null;
         $userRole = $options['user_role'] ?? 'SYSTEM';
         $metadata = $options['metadata'] ?? [];

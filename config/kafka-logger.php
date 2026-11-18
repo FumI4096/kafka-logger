@@ -18,27 +18,9 @@ return [
     // PRODUCTION | STAGING | DEVELOPMENT | LOCAL (defaults to uppercase APP_ENV)
     'environment' => strtoupper((string) (env('KAFKA_LOGGER_ENVIRONMENT') ?: env('APP_ENV', 'production'))),
 
-    'default_topic' => env('KAFKA_LOGGER_DEFAULT_TOPIC', 'YOUR_TOPIC'),
+    'default_topic' => env('KAFKA_LOGGER_DEFAULT_TOPIC', 'CLS.LIVE.logs'),
 
     'produce_to_kafka' => env('KAFKA_LOGGER_PRODUCE', true),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Target CLS Topic Routing (Local / Live / Both)
-    |--------------------------------------------------------------------------
-    |
-    | Set KAFKA_LOGGER_PRODUCE_LOCAL and/or KAFKA_LOGGER_PRODUCE_LIVE to true/false
-    | to route logs to local CLS, live CLS, or both simultaneously. When both
-    | are left null/unset, `default_topic` is used for backward compatibility.
-    |
-    */
-    'produce_local' => env('KAFKA_LOGGER_PRODUCE_LOCAL', null),
-
-    'produce_live' => env('KAFKA_LOGGER_PRODUCE_LIVE', null),
-
-    'local_topic' => env('KAFKA_LOGGER_LOCAL_TOPIC', null),
-
-    'live_topic' => env('KAFKA_LOGGER_LIVE_TOPIC', null),
 
     'auto_log_auth' => env('KAFKA_LOGGER_AUTO_LOG_AUTH', true),
 

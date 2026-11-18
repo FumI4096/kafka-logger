@@ -152,6 +152,7 @@ class LoggerServiceTest extends TestCase
     public function test_resolve_target_topics_supports_explicit_and_default_topic(): void
     {
         $this->assertSame(['CUSTOM.topic'], LoggerService::resolveTargetTopics('CUSTOM.topic'));
-        $this->assertSame(['YOUR_TOPIC'], LoggerService::resolveTargetTopics(null));
+        $this->assertSame(['CLS.LIVE.logs'], LoggerService::resolveTargetTopics(null));
+        $this->assertSame(['CLS.LIVE.logs'], LoggerService::resolveTargetTopics(''));
     }
 }

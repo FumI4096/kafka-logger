@@ -160,7 +160,7 @@ class LoggerService
     }
 
     /**
-     * Resolve target Kafka topics based on explicit override, local/live flags, or default_topic.
+     * Resolve target Kafka topic based on explicit override or default_topic.
      *
      * @return array<int, string>
      */
@@ -170,32 +170,9 @@ class LoggerService
             return [static::sanitizeTopicName($explicitTopic)];
         }
 
-        $produceLocal = PayloadSanitizer::config('kafka-logger.produce_local', null);
-        $produceLive = PayloadSanitizer::config('kafka-logger.produce_live', null);
+        $defaultTopic = trim((string) PayloadSanitizer::config('kafka-logger.default_topic', 'CLS.LIVE.logs'));
 
-        if ($produceLocal !== null || $produceLive !== null) {
-            $topics = [];
-
-            if (filter_var($produceLocal, FILTER_VALIDATE_BOOLEAN)) {
-                $localTopic = trim((string) PayloadSanitizer::config('kafka-logger.local_topic', ''));
-                if ($localTopic !== '') {
-                    $topics[] = static::sanitizeTopicName($localTopic);
-                }
-            }
-
-            if (filter_var($produceLive, FILTER_VALIDATE_BOOLEAN)) {
-                $liveTopic = trim((string) PayloadSanitizer::config('kafka-logger.live_topic', ''));
-                if ($liveTopic !== '') {
-                    $topics[] = static::sanitizeTopicName($liveTopic);
-                }
-            }
-
-            if (! empty($topics)) {
-                return array_values(array_unique($topics));
-            }
-        }
-
-        return [static::sanitizeTopicName((string) PayloadSanitizer::config('kafka-logger.default_topic', 'YOUR_TOPIC'))];
+        return [static::sanitizeTopicName($defaultTopic !== '' ? $defaultTopic : 'CLS.LIVE.logs')];
     }
 
     /**
