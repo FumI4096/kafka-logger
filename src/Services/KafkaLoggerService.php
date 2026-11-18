@@ -5,6 +5,8 @@ namespace Mimon\KafkaLogger\Services;
 use Mimon\KafkaLogger\Enums\ComponentSubsystem;
 use Mimon\KafkaLogger\Enums\Environment;
 use Mimon\KafkaLogger\Enums\LogLevel;
+use Mimon\KafkaLogger\Listeners\LogErrorEvents;
+use Mimon\KafkaLogger\Support\LogContext;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
@@ -39,6 +41,79 @@ class KafkaLoggerService
     public function event(string $eventType): KafkaLogBuilder
     {
         return $this->make()->event($eventType);
+    }
+
+    /**
+     * Bind scoped workflow/operation context (module, workflow, operation, service, trace_id).
+     *
+     * @param  array<string, mixed>  $context
+     */
+    public function withContext(array $context): void
+    {
+        LogContext::set($context);
+    }
+
+    public function clearContext(): void
+    {
+        LogContext::clear();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function getContext(): array
+    {
+        return LogContext::get();
+    }
+
+    /**
+     * Execute a unit of work under a shared trace_id and scoped context.
+     * Logs a single ERROR event (with duration_ms and root cause) if a Throwable escapes,
+     * then rethrows without triggering duplicate LogErrorEvents reporting.
+     *
+     * @template TReturn
+     *
+     * @param  callable(): TReturn  $callback
+     * @param  array<string, mixed>  $context
+     * @return TReturn
+     */
+    public function transaction(
+        callable $callback,
+        array $context = [],
+        string $event = 'WORKFLOW_FAILED',
+        ?string $successEvent = null,
+    ): mixed {
+        return LogContext::runWith($context, function () use ($callback, $event, $successEvent) {
+            $startedAtMs = (int) round(microtime(true) * 1000);
+
+            try {
+                $result = $callback();
+
+                if ($successEvent !== null && $successEvent !== '') {
+                    $durationMs = max(0, ((int) round(microtime(true) * 1000)) - $startedAtMs);
+                    $this->event($successEvent)
+                        ->info()
+                        ->withMetadata(['duration_ms' => $durationMs])
+                        ->send();
+                }
+
+                return $result;
+            } catch (Throwable $e) {
+                $durationMs = max(0, ((int) round(microtime(true) * 1000)) - $startedAtMs);
+                LogErrorEvents::markAsLogged($e);
+
+                $this->event($event)
+                    ->error($e->getMessage() ?: 'Workflow execution failed.', $e)
+                    ->withMetadata([
+                        'duration_ms' => $durationMs,
+                        'exception_class' => get_class($e),
+                        'error_category' => 'WORKFLOW_ERROR',
+                    ])
+                    ->send();
+
+                throw $e;
+            }
+        });
     }
 
     public function info(?string $arg1 = null, ?string $arg2 = null, array $options = []): KafkaLogBuilder|array
@@ -139,6 +214,7 @@ class KafkaLoggerService
         $env = $options['environment'] ?? $this->environment;
         $component = $options['component'] ?? ComponentSubsystem::APPLICATION_LOGIC;
         $topic = $options['topic'] ?? null;
+        $traceId = $options['trace_id'] ?? null;
         $userId = $options['user_id'] ?? null;
         $userRole = $options['user_role'] ?? 'SYSTEM';
         $metadata = $options['metadata'] ?? [];
@@ -156,7 +232,8 @@ class KafkaLoggerService
             metadata: $metadata,
             exception: $exception,
             environment: $env,
-            appName: $appName
+            appName: $appName,
+            traceId: $traceId,
         );
     }
 }

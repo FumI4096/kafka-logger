@@ -25,6 +25,8 @@ class KafkaLogBuilder
 
     protected ?string $customTopic = null;
 
+    protected ?string $customTraceId = null;
+
     protected ?string $userId = null;
 
     protected ?string $userRole = null;
@@ -148,6 +150,34 @@ class KafkaLogBuilder
         return $this;
     }
 
+    public function module(string $module): self
+    {
+        $this->metadata['module'] = $module;
+
+        return $this;
+    }
+
+    public function workflow(string $workflow): self
+    {
+        $this->metadata['workflow'] = $workflow;
+
+        return $this;
+    }
+
+    public function operation(string $operation): self
+    {
+        $this->metadata['operation'] = $operation;
+
+        return $this;
+    }
+
+    public function traceId(string $traceId): self
+    {
+        $this->customTraceId = $traceId;
+
+        return $this;
+    }
+
     public function actor(string $userId, ?string $role = null): self
     {
         $this->userId = $userId;
@@ -195,6 +225,7 @@ class KafkaLogBuilder
             'environment' => $this->customEnvironment,
             'component' => $this->customComponent,
             'topic' => $this->customTopic,
+            'trace_id' => $this->customTraceId,
             'user_id' => $this->userId,
             'user_role' => $this->userRole,
             'metadata' => $this->metadata,

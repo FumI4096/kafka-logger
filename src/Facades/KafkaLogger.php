@@ -7,6 +7,10 @@ use Illuminate\Support\Facades\Facade;
 /**
  * @method static \Mimon\KafkaLogger\Services\KafkaLogBuilder make()
  * @method static \Mimon\KafkaLogger\Services\KafkaLogBuilder event(string $eventType)
+ * @method static void withContext(array $context)
+ * @method static void clearContext()
+ * @method static array getContext()
+ * @method static mixed transaction(callable $callback, array $context = [], string $event = 'WORKFLOW_FAILED', ?string $successEvent = null)
  * @method static \Mimon\KafkaLogger\Services\KafkaLogBuilder|\App\Models\SystemLog info(?string $arg1 = null, ?string $arg2 = null, array $options = [])
  * @method static \Mimon\KafkaLogger\Services\KafkaLogBuilder|\App\Models\SystemLog warning(?string $arg1 = null, ?string $arg2 = null, array $options = [])
  * @method static \Mimon\KafkaLogger\Services\KafkaLogBuilder|\App\Models\SystemLog debug(?string $arg1 = null, ?string $arg2 = null, array $options = [])

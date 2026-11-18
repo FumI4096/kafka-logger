@@ -8,6 +8,7 @@ use Mimon\KafkaLogger\Enums\ComponentSubsystem;
 use Mimon\KafkaLogger\Enums\Environment;
 use Mimon\KafkaLogger\Enums\LogLevel;
 use Mimon\KafkaLogger\Jobs\SendKafkaLogJob;
+use Mimon\KafkaLogger\Support\LogContext;
 use Mimon\KafkaLogger\Support\PayloadSanitizer;
 use Mimon\KafkaLogger\Support\SafeTrace;
 
@@ -36,12 +37,13 @@ class LoggerService
         ?array $metadata = null,
         ?\Throwable $exception = null,
         Environment|string|null $environment = null,
-        ?string $appName = null
+        ?string $appName = null,
+        ?string $traceId = null
     ): array {
         $resolvedAppCode = $appCode ?? $appName ?? (string) PayloadSanitizer::config('kafka-logger.app_code', PayloadSanitizer::config('kafka-logger.app_name', 'HR_APP'));
         $resolvedAppName = $appName ?? $appCode ?? $resolvedAppCode;
         $logId = (string) Str::uuid();
-        $traceId = static::resolveTraceId(static::requestHeader('x-trace-id'));
+        $traceId = $traceId ?: (LogContext::traceId() ?? static::resolveTraceId(static::requestHeader('x-trace-id')));
         $spanId = 'sp-' . Str::random(6);
 
         $resolvedEnv = is_string($environment)
@@ -119,7 +121,7 @@ class LoggerService
                 'code' => $errorCode,
                 'stack_trace' => $stackTrace,
             ],
-            'metadata' => PayloadSanitizer::redactArray($metadata ?? []),
+            'metadata' => PayloadSanitizer::redactArray(array_merge(LogContext::get(), $metadata ?? [])),
         ];
 
         $payload = static::enforceSizeLimit(

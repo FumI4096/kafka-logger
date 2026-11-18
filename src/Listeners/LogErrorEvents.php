@@ -7,6 +7,7 @@ use Mimon\KafkaLogger\Enums\LogLevel;
 use Mimon\KafkaLogger\Facades\KafkaLogger;
 use Mimon\KafkaLogger\Support\PayloadSanitizer;
 use PDOException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Throwable;
 
 class LogErrorEvents
@@ -265,6 +266,27 @@ class LogErrorEvents
             $metadata['file'] = $exception->getFile();
             $metadata['line'] = $exception->getLine();
 
+            $httpStatus = $this->resolveHttpStatus($exception);
+            $metadata['http_status'] = $httpStatus;
+            $metadata['error_category'] = $httpStatus >= 500
+                ? 'INTERNAL_SERVER_ERROR'
+                : 'DOMAIN_OR_VALIDATION_ERROR';
+
+            $previousChain = [];
+            $prev = $exception->getPrevious();
+            while ($prev !== null && count($previousChain) < 3) {
+                $previousChain[] = [
+                    'class' => get_class($prev),
+                    'message' => PayloadSanitizer::redactString($prev->getMessage()),
+                    'file' => $prev->getFile(),
+                    'line' => $prev->getLine(),
+                ];
+                $prev = $prev->getPrevious();
+            }
+            if (! empty($previousChain)) {
+                $metadata['previous_exceptions'] = $previousChain;
+            }
+
             if (is_a($exception, 'Illuminate\Database\QueryException') && method_exists($exception, 'getConnectionName')) {
                 $metadata['db_connection'] = $exception->getConnectionName();
                 $metadata['sql_state'] = $exception->errorInfo[0] ?? (string) $exception->getCode();
@@ -282,6 +304,7 @@ class LogErrorEvents
             $metadata['url'] = $req->fullUrl();
             $metadata['http_method'] = $req->method();
             $metadata['route_name'] = $req->route()?->getName();
+            $metadata['controller_action'] = $req->route()?->getActionName();
 
             if ($req->hasHeader('X-Livewire') || str_contains($req->path(), 'livewire')) {
                 $metadata['is_livewire'] = true;
@@ -317,6 +340,33 @@ class LogErrorEvents
         }
 
         return 'AUTHENTICATED_USER';
+    }
+
+    protected function resolveHttpStatus(Throwable $exception): int
+    {
+        if ($exception instanceof HttpExceptionInterface) {
+            return $exception->getStatusCode();
+        }
+        if (is_a($exception, 'Illuminate\Validation\ValidationException')) {
+            return 422;
+        }
+        if (is_a($exception, 'Illuminate\Auth\AuthenticationException')) {
+            return 401;
+        }
+        if (is_a($exception, 'Illuminate\Auth\Access\AuthorizationException')) {
+            return 403;
+        }
+
+        return 500;
+    }
+
+    /**
+     * Mark a Throwable as already logged (e.g. by KafkaLogger::transaction) to prevent duplicate logs.
+     */
+    public static function markAsLogged(Throwable $exception): void
+    {
+        self::$loggedExceptions ??= new \WeakMap();
+        self::$loggedExceptions[$exception] = true;
     }
 
     /**
