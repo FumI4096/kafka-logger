@@ -119,4 +119,52 @@ return [
         static fn (string $lvl): string => strtoupper(trim($lvl)),
         explode(',', (string) env('KAFKA_LOGGER_RATE_LIMIT_LEVELS', 'ERROR,CRITICAL'))
     ))),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Lean Pulse APM Telemetry (Zero-Config)
+    |--------------------------------------------------------------------------
+    |
+    | Automatically ships threshold-triggered performance signals (Slow HTTP
+    | Requests & Slow SQL Queries) plus a throttled Server Vitals heartbeat
+    | (CPU, RAM, Disk — at most once per interval during normal traffic, no
+    | cron or scheduler needed) over your existing CLS Kafka topic.
+    |
+    */
+    'pulse' => [
+        'enabled' => env('KAFKA_LOGGER_PULSE_ENABLED', true),
+
+        'slow_requests' => [
+            'enabled' => env('KAFKA_LOGGER_PULSE_SLOW_REQUESTS', true),
+            'threshold_ms' => (int) env('KAFKA_LOGGER_PULSE_SLOW_REQUEST_MS', 1000),
+            'ignore_paths' => ['_debugbar/*', 'horizon/*', 'telescope/*', 'pulse*', 'livewire/update'],
+        ],
+
+        'slow_queries' => [
+            'enabled' => env('KAFKA_LOGGER_PULSE_SLOW_QUERIES', true),
+            'threshold_ms' => (int) env('KAFKA_LOGGER_PULSE_SLOW_QUERY_MS', 500),
+            'max_query_length' => 1000,
+        ],
+
+        'slow_jobs' => [
+            'enabled' => env('KAFKA_LOGGER_PULSE_SLOW_JOBS', true),
+            'threshold_ms' => (int) env('KAFKA_LOGGER_PULSE_SLOW_JOB_MS', 1000),
+        ],
+
+        'slow_outgoing_requests' => [
+            'enabled' => env('KAFKA_LOGGER_PULSE_SLOW_OUTGOING', true),
+            'threshold_ms' => (int) env('KAFKA_LOGGER_PULSE_SLOW_OUTGOING_MS', 1000),
+        ],
+
+        'usage_rollup' => [
+            'enabled' => env('KAFKA_LOGGER_PULSE_USAGE_ROLLUP', true),
+            'flush_interval_seconds' => (int) env('KAFKA_LOGGER_PULSE_FLUSH_SECONDS', 60),
+        ],
+
+        'server_heartbeat' => [
+            'enabled' => env('KAFKA_LOGGER_PULSE_SERVER_HEARTBEAT', true),
+            'interval_seconds' => (int) env('KAFKA_LOGGER_PULSE_HEARTBEAT_SECONDS', 60),
+            'disk_path' => env('KAFKA_LOGGER_PULSE_DISK_PATH', '/'),
+        ],
+    ],
 ];
