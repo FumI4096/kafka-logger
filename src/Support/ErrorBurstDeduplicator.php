@@ -4,23 +4,23 @@ namespace Mimon\KafkaLogger\Support;
 
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
-use Mimon\KafkaLogger\Enums\ComponentSubsystem;
-use Mimon\KafkaLogger\Enums\LogLevel;
 use Mimon\KafkaLogger\Jobs\FlushCoalescedErrorJob;
 use Mimon\KafkaLogger\Services\LoggerService;
 use Throwable;
 
 /**
- * Coalesces identical ERROR/CRITICAL logs within a millisecond burst window (default 1500ms)
- * so only a single error instance is produced per burst along with an accurate occurrence count.
+ * Coalesces identical ERROR/CRITICAL logs within a sliding burst window (default 1500ms,
+ * max continuous burst span 60s) so only the ERROR/CRITICAL record itself is emitted carrying
+ * accurate occurrence counts — never fabricating separate INFO control logs.
  */
 class ErrorBurstDeduplicator
 {
+    /**
+     * @deprecated Retained solely so CLS consumers can silently drop legacy v1.2.8 control events.
+     */
     public const COUNT_UPDATE_EVENT = 'ERROR_BURST_COUNT_UPDATE';
 
     public const CACHE_PREFIX = 'mimon_kafka_logger:err_dedup:';
-
-    public const PENDING_INDEX_KEY = 'mimon_kafka_logger:err_dedup:pending_index';
 
     /**
      * In-process coalescing buffer keyed by error signature fingerprint.
@@ -48,15 +48,23 @@ class ErrorBurstDeduplicator
     protected static $publisher = null;
 
     /**
-     * Normalize a log message so dynamic IDs, UUIDs, hex tokens, and timestamps share one fingerprint.
+     * Normalize a log message so dynamic SQL tails, IDs, UUIDs, emails, IPs, hex tokens,
+     * quoted literals, and timestamps share a single deterministic fingerprint.
      */
     public static function normalizeMessage(string $message): string
     {
+        // Normalize Laravel QueryException SQL suffixes so identical DB errors across queries share one signature
+        $normalized = preg_replace(
+            '/\(Connection:\s*[^,]+,\s*SQL:\s*.*\)\s*$/si',
+            '(Connection: <conn>, SQL: <sql>)',
+            $message
+        ) ?? $message;
+
         $normalized = preg_replace(
             '/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i',
             '<uuid>',
-            $message
-        ) ?? $message;
+            $normalized
+        ) ?? $normalized;
 
         $normalized = preg_replace(
             '/\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b/',
@@ -65,8 +73,32 @@ class ErrorBurstDeduplicator
         ) ?? $normalized;
 
         $normalized = preg_replace(
+            '/\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b/i',
+            '<email>',
+            $normalized
+        ) ?? $normalized;
+
+        $normalized = preg_replace(
+            '/\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/',
+            '<ip>',
+            $normalized
+        ) ?? $normalized;
+
+        $normalized = preg_replace(
             '/\b(?:0x)?[0-9a-f]{16,}\b/i',
             '<hex>',
+            $normalized
+        ) ?? $normalized;
+
+        $normalized = preg_replace(
+            "/\'[^\'<>]{1,80}\'/",
+            "'<str>'",
+            $normalized
+        ) ?? $normalized;
+
+        $normalized = preg_replace(
+            '/"[^"<>]{1,80}"/',
+            '"<str>"',
             $normalized
         ) ?? $normalized;
 
@@ -116,6 +148,14 @@ class ErrorBurstDeduplicator
         return max(0, (int) PayloadSanitizer::config('kafka-logger.error_dedup.window_ms', 1500));
     }
 
+    public static function maxBurstMs(): int
+    {
+        return max(
+            self::windowMs(),
+            (int) PayloadSanitizer::config('kafka-logger.error_dedup.max_burst_ms', 60000)
+        );
+    }
+
     /**
      * @return array<int, string>
      */
@@ -152,12 +192,12 @@ class ErrorBurstDeduplicator
     }
 
     /**
-     * Capture an error payload into the 1.5s burst coalescer.
+     * Capture an ERROR/CRITICAL payload into the sliding burst coalescer.
      *
      * Returns:
      *   - handled: false when dedup is disabled or level is excluded (caller publishes immediately)
      *   - duplicate: true when collapsed into an existing active burst (returns empty payload to caller)
-     *   - payload: enriched representative payload when this is the first occurrence in the window
+     *   - payload: enriched representative ERROR/CRITICAL payload when this is the first occurrence in the window
      *
      * @param  array<int, string>  $targetTopics
      * @return array{handled: bool, duplicate: bool, payload: array<string, mixed>}
@@ -211,7 +251,7 @@ class ErrorBurstDeduplicator
     /**
      * Flush all buffered in-process errors (called at request termination / shutdown / tests).
      *
-     * @return array<int, array<string, mixed>> Published leader payloads
+     * @return array<int, array<string, mixed>> Published leader ERROR/CRITICAL payloads
      */
     public static function flush(): array
     {
@@ -232,8 +272,6 @@ class ErrorBurstDeduplicator
                     $emitted[] = $published;
                 }
             }
-
-            self::flushExpiredCrossProcessCounts();
         } catch (Throwable) {
             // Never disrupt request termination
         } finally {
@@ -244,7 +282,7 @@ class ErrorBurstDeduplicator
     }
 
     /**
-     * Flush only in-process entries whose burst window has already elapsed.
+     * Flush only in-process entries whose sliding inactivity gap or max burst span has elapsed.
      */
     public static function flushExpiredInProcess(?int $nowMs = null, ?int $windowMs = null): void
     {
@@ -254,10 +292,14 @@ class ErrorBurstDeduplicator
 
         $nowMs ??= self::nowMs();
         $windowMs ??= self::windowMs();
+        $maxBurstMs = self::maxBurstMs();
 
         $expired = [];
         foreach (self::$inProcessBuffer as $fingerprint => $entry) {
-            if (($nowMs - $entry['first_seen_at_ms']) >= $windowMs) {
+            $idleElapsed = $nowMs - $entry['last_seen_at_ms'];
+            $totalSpan = $nowMs - $entry['first_seen_at_ms'];
+
+            if ($idleElapsed >= $windowMs || $totalSpan >= $maxBurstMs) {
                 $expired[$fingerprint] = $entry;
                 unset(self::$inProcessBuffer[$fingerprint]);
             }
@@ -279,22 +321,27 @@ class ErrorBurstDeduplicator
     }
 
     /**
-     * Called by FlushCoalescedErrorJob after the 1.5s delay when async queue mode is active.
+     * Called by FlushCoalescedErrorJob after the burst delay when async queue mode is active.
+     * Emits a single ERROR/CRITICAL payload carrying the final combined cross-process count.
      */
     public static function flushDelayedJobEntry(string $fingerprint): ?array
     {
+        $winKey = self::CACHE_PREFIX . "win:{$fingerprint}";
         $bufKey = self::CACHE_PREFIX . "buf:{$fingerprint}";
         $cntKey = self::CACHE_PREFIX . "cnt:{$fingerprint}";
+        $lastKey = self::CACHE_PREFIX . "last:{$fingerprint}";
 
         $buffered = self::cachePull($bufKey);
+        $extraCount = max(0, (int) self::cachePull($cntKey));
+        $extraLastSeen = self::cachePull($lastKey);
+        self::cacheForget($winKey);
+
         if (! is_array($buffered) || empty($buffered['payload']) || empty($buffered['topics'])) {
             return null;
         }
 
-        $extra = self::cachePull($cntKey);
-        $extraCount = is_array($extra) ? max(0, (int) ($extra['delta_count'] ?? 0)) : 0;
-        $lastSeenAt = (is_array($extra) && ! empty($extra['last_seen_at']))
-            ? (string) $extra['last_seen_at']
+        $lastSeenAt = (is_string($extraLastSeen) && $extraLastSeen !== '')
+            ? $extraLastSeen
             : (string) ($buffered['last_seen_at'] ?? ($buffered['payload']['timestamps']['created_at'] ?? Carbon::now()->toIso8601String()));
 
         $totalCount = max(1, (int) ($buffered['count'] ?? 1)) + $extraCount;
@@ -308,8 +355,6 @@ class ErrorBurstDeduplicator
         $payload['metadata']['_first_seen_at'] = (string) ($buffered['first_seen_at'] ?? ($payload['timestamps']['created_at'] ?? $lastSeenAt));
         $payload['metadata']['_last_seen_at'] = $lastSeenAt;
 
-        self::removeFromPendingIndex($fingerprint);
-
         if (LoggerService::shouldSuppressBySustainedRateLimit($payload, $fingerprint)) {
             return null;
         }
@@ -320,89 +365,13 @@ class ErrorBurstDeduplicator
     }
 
     /**
-     * Flush any expired cross-process suppressed count rollups as lightweight control events
-     * so CLS folds trailing counts into the leader SystemLog row without inserting a second row.
+     * @deprecated No-op since v1.2.9. Cross-process counts are folded directly onto the ERROR/CRITICAL
+     *             record (via FlushCoalescedErrorJob in async mode or CLS consumer coalescing in sync mode);
+     *             separate INFO control events are never emitted.
      */
     public static function flushExpiredCrossProcessCounts(): int
     {
-        $nowMs = self::nowMs();
-        $index = self::cacheGet(self::PENDING_INDEX_KEY);
-        if (! is_array($index) || empty($index)) {
-            return 0;
-        }
-
-        $flushed = 0;
-        $remaining = [];
-
-        foreach ($index as $fingerprint => $expiresAtMs) {
-            if (! is_string($fingerprint)) {
-                continue;
-            }
-
-            if ((int) $expiresAtMs > $nowMs) {
-                $remaining[$fingerprint] = (int) $expiresAtMs;
-                continue;
-            }
-
-            // Atomically claim this expired rollup so only one worker emits the count update
-            $claimKey = self::CACHE_PREFIX . "claim:{$fingerprint}:{$expiresAtMs}";
-            if (! self::cacheAdd($claimKey, 1, 15)) {
-                continue;
-            }
-
-            $cntKey = self::CACHE_PREFIX . "cnt:{$fingerprint}";
-            $pending = self::cachePull($cntKey);
-
-            if (! is_array($pending) || (int) ($pending['delta_count'] ?? 0) <= 0) {
-                continue;
-            }
-
-            $deltaCount = (int) $pending['delta_count'];
-            $leaderLogId = (string) ($pending['leader_log_id'] ?? '');
-            if ($leaderLogId === '') {
-                continue;
-            }
-
-            $topics = is_array($pending['topics'] ?? null) && ! empty($pending['topics'])
-                ? $pending['topics']
-                : LoggerService::resolveTargetTopics(null);
-
-            $controlPayload = LoggerService::buildEnterprisePayload(
-                appCode: (string) ($pending['app_code'] ?? ''),
-                eventType: self::COUNT_UPDATE_EVENT,
-                message: "Error burst count update (+{$deltaCount}) for {$leaderLogId}.",
-                level: LogLevel::INFO,
-                component: ComponentSubsystem::tryFrom((string) ($pending['component'] ?? '')) ?? ComponentSubsystem::APPLICATION_LOGIC,
-                topic: $topics[0] ?? null,
-                userId: 'usr_system',
-                userRole: 'SYSTEM',
-                metadata: [
-                    '_leader_log_id' => $leaderLogId,
-                    '_leader_created_at' => (string) ($pending['leader_created_at'] ?? ''),
-                    '_dedup_fingerprint' => $fingerprint,
-                    '_dedup_window_ms' => (int) ($pending['window_ms'] ?? self::windowMs()),
-                    '_delta_count' => $deltaCount,
-                    '_last_seen_at' => (string) ($pending['last_seen_at'] ?? Carbon::now()->toIso8601String()),
-                    '_target_level' => (string) ($pending['level'] ?? 'ERROR'),
-                    '_target_event' => (string) ($pending['event_type'] ?? 'APPLICATION_ERROR'),
-                ],
-                environment: (string) ($pending['environment'] ?? ''),
-                appName: (string) ($pending['app_name'] ?? $pending['app_code'] ?? ''),
-            );
-
-            if (! empty($controlPayload)) {
-                self::publishPayload($topics, $controlPayload);
-                $flushed++;
-            }
-        }
-
-        if (empty($remaining)) {
-            self::cacheForget(self::PENDING_INDEX_KEY);
-        } else {
-            self::cachePut(self::PENDING_INDEX_KEY, array_slice($remaining, -100, null, true), 60);
-        }
-
-        return $flushed;
+        return 0;
     }
 
     /**
@@ -447,62 +416,41 @@ class ErrorBurstDeduplicator
     }
 
     /**
-     * Coordinate cross-process 1500ms deduplication and publish or suppress accordingly.
+     * Publish the single ERROR/CRITICAL record (or fold cross-process in delayed-job async mode).
+     * Never creates separate INFO control messages.
      *
      * @param  array<string, mixed>  $entry
      */
     protected static function emitOrCoalesceCrossProcess(string $fingerprint, array $entry): ?array
     {
-        $nowMs = self::nowMs();
         $windowMs = self::windowMs();
-        $expiresAtMs = $nowMs + $windowMs;
-
         $payload = $entry['payload'];
         $topics = $entry['topics'];
         $count = max(1, (int) $entry['count']);
 
-        $windowKey = self::CACHE_PREFIX . "win:{$fingerprint}";
-        $leaderMeta = [
-            'leader_log_id' => (string) ($payload['log_id'] ?? ''),
-            'leader_created_at' => (string) ($payload['timestamps']['created_at'] ?? ''),
-            'app_code' => (string) ($payload['application']['code'] ?? ''),
-            'app_name' => (string) ($payload['application']['name'] ?? ''),
-            'environment' => (string) ($payload['environment'] ?? ''),
-            'component' => (string) ($payload['application']['component'] ?? 'APPLICATION_LOGIC'),
-            'level' => (string) ($payload['event']['level'] ?? 'ERROR'),
-            'event_type' => (string) ($payload['event']['type'] ?? 'APPLICATION_ERROR'),
-            'topics' => $topics,
-            'window_ms' => $windowMs,
-            'expires_at_ms' => $expiresAtMs,
-        ];
-
-        $acquired = self::tryAcquireCrossProcessWindow($windowKey, $leaderMeta, $windowMs, $nowMs);
-
-        if (! $acquired) {
-            // Another worker already owns this 1500ms window: suppress full error & count atomically
-            $existingLeader = self::cacheGet($windowKey);
-            if (is_array($existingLeader) && ! empty($existingLeader['leader_log_id'])) {
-                self::recordCrossProcessDuplicate(
-                    fingerprint: $fingerprint,
-                    leader: $existingLeader,
-                    deltaCount: $count,
-                    lastSeenAt: (string) $entry['last_seen_at'],
-                    windowMs: $windowMs,
-                );
-            }
-
-            return null;
-        }
-
-        // We won the 1500ms window!
         $flushMode = strtolower((string) PayloadSanitizer::config('kafka-logger.error_dedup.flush_mode', 'auto'));
         $isAsync = (bool) PayloadSanitizer::config('kafka-logger.async', false);
         $useDelayedJob = ($flushMode === 'delayed_job' || ($flushMode === 'auto' && $isAsync))
-            && function_exists('dispatch')
-            && self::$publisher === null;
+            && function_exists('dispatch');
 
         if ($useDelayedJob) {
+            $ttlSeconds = max(15, (int) ceil($windowMs / 1000) * 5);
+            $winKey = self::CACHE_PREFIX . "win:{$fingerprint}";
             $bufKey = self::CACHE_PREFIX . "buf:{$fingerprint}";
+            $cntKey = self::CACHE_PREFIX . "cnt:{$fingerprint}";
+            $lastKey = self::CACHE_PREFIX . "last:{$fingerprint}";
+
+            // Native Cache::add works identically across phpredis, predis, database, file, and array stores.
+            $acquired = self::cacheAdd($winKey, 1, max(2, (int) ceil($windowMs / 1000) + 1));
+
+            if (! $acquired) {
+                // Another worker already owns the active delayed window: increment scalar counter atomically.
+                self::cacheIncrement($cntKey, $count, $ttlSeconds);
+                self::cachePut($lastKey, (string) $entry['last_seen_at'], $ttlSeconds);
+
+                return null;
+            }
+
             self::cachePut($bufKey, [
                 'payload' => $payload,
                 'topics' => $topics,
@@ -510,19 +458,21 @@ class ErrorBurstDeduplicator
                 'window_ms' => $windowMs,
                 'first_seen_at' => $entry['first_seen_at'],
                 'last_seen_at' => $entry['last_seen_at'],
-            ], max(15, (int) ceil($windowMs / 1000) * 5));
+            ], $ttlSeconds);
 
             try {
                 dispatch((new FlushCoalescedErrorJob($fingerprint))->delay(Carbon::now()->addMilliseconds($windowMs)));
 
                 return $payload;
             } catch (Throwable) {
-                // Queue unavailable -> fall through to immediate publish below
+                // Queue unavailable -> clean up window and fall through to immediate ERROR/CRITICAL publish
                 self::cacheForget($bufKey);
+                self::cacheForget($winKey);
             }
         }
 
-        // Sync mode (or queue fallback): enrich with in-process burst count and publish 1 error instance
+        // Sync mode (or queue fallback): enrich the ERROR/CRITICAL record itself with the in-process count
+        // and publish it directly. Concurrent PHP-FPM workers are folded into 1 row by CLS LogConsumerHandler.
         $payload['metadata'] = is_array($payload['metadata'] ?? null) ? $payload['metadata'] : [];
         $payload['metadata']['_dedup_fingerprint'] = $fingerprint;
         $payload['metadata']['_dedup_window_ms'] = $windowMs;
@@ -538,106 +488,6 @@ class ErrorBurstDeduplicator
         self::publishPayload($topics, $payload);
 
         return $payload;
-    }
-
-    /**
-     * Atomically acquire a millisecond-precision cross-process window lock.
-     * Uses native Redis `SET NX PX` when Redis is active, with safe Cache::add fallback.
-     *
-     * @param  array<string, mixed>  $leaderMeta
-     */
-    protected static function tryAcquireCrossProcessWindow(string $key, array $leaderMeta, int $windowMs, int $nowMs): bool
-    {
-        try {
-            if (! class_exists('\Illuminate\Support\Facades\Cache')) {
-                return true;
-            }
-
-            $store = Cache::getStore();
-            if ($store instanceof \Illuminate\Cache\RedisStore) {
-                $prefixed = $store->getPrefix() . $key;
-                $serialized = serialize($leaderMeta);
-                $result = $store->connection()->set($prefixed, $serialized, 'PX', max(1, $windowMs), 'NX');
-
-                return (bool) $result;
-            }
-
-            $existing = Cache::get($key);
-            if (is_array($existing)) {
-                if ((int) ($existing['expires_at_ms'] ?? 0) > $nowMs) {
-                    return false;
-                }
-                Cache::forget($key);
-            }
-
-            return (bool) Cache::add($key, $leaderMeta, max(1, (int) ceil($windowMs / 1000)));
-        } catch (Throwable) {
-            return true;
-        }
-    }
-
-    /**
-     * Accumulate suppressed cross-process error count for the active leader window.
-     *
-     * @param  array<string, mixed>  $leader
-     */
-    protected static function recordCrossProcessDuplicate(
-        string $fingerprint,
-        array $leader,
-        int $deltaCount,
-        string $lastSeenAt,
-        int $windowMs,
-    ): void {
-        $cntKey = self::CACHE_PREFIX . "cnt:{$fingerprint}";
-        $ttlSeconds = max(30, (int) ceil($windowMs / 1000) * 10);
-
-        $existing = self::cacheGet($cntKey);
-        if (! is_array($existing) || ($existing['leader_log_id'] ?? null) !== ($leader['leader_log_id'] ?? null)) {
-            $existing = [
-                'leader_log_id' => $leader['leader_log_id'] ?? '',
-                'leader_created_at' => $leader['leader_created_at'] ?? '',
-                'app_code' => $leader['app_code'] ?? '',
-                'app_name' => $leader['app_name'] ?? '',
-                'environment' => $leader['environment'] ?? '',
-                'component' => $leader['component'] ?? 'APPLICATION_LOGIC',
-                'level' => $leader['level'] ?? 'ERROR',
-                'event_type' => $leader['event_type'] ?? 'APPLICATION_ERROR',
-                'topics' => $leader['topics'] ?? [],
-                'window_ms' => $leader['window_ms'] ?? $windowMs,
-                'delta_count' => 0,
-                'last_seen_at' => $lastSeenAt,
-            ];
-        }
-
-        $existing['delta_count'] = ((int) ($existing['delta_count'] ?? 0)) + max(1, $deltaCount);
-        $existing['last_seen_at'] = $lastSeenAt;
-
-        self::cachePut($cntKey, $existing, $ttlSeconds);
-
-        // Register in pending index so trailing count flushes once the window expires
-        $index = self::cacheGet(self::PENDING_INDEX_KEY);
-        if (! is_array($index)) {
-            $index = [];
-        }
-        $index[$fingerprint] = (int) ($leader['expires_at_ms'] ?? (self::nowMs() + $windowMs));
-        if (count($index) > 100) {
-            $index = array_slice($index, -100, null, true);
-        }
-        self::cachePut(self::PENDING_INDEX_KEY, $index, 60);
-    }
-
-    protected static function removeFromPendingIndex(string $fingerprint): void
-    {
-        $index = self::cacheGet(self::PENDING_INDEX_KEY);
-        if (! is_array($index) || ! isset($index[$fingerprint])) {
-            return;
-        }
-        unset($index[$fingerprint]);
-        if (empty($index)) {
-            self::cacheForget(self::PENDING_INDEX_KEY);
-        } else {
-            self::cachePut(self::PENDING_INDEX_KEY, $index, 60);
-        }
     }
 
     /**
@@ -668,18 +518,6 @@ class ErrorBurstDeduplicator
         });
     }
 
-    protected static function cacheGet(string $key, mixed $default = null): mixed
-    {
-        try {
-            if (class_exists('\Illuminate\Support\Facades\Cache')) {
-                return Cache::get($key, $default);
-            }
-        } catch (Throwable) {
-        }
-
-        return $default;
-    }
-
     protected static function cachePut(string $key, mixed $value, int $seconds): void
     {
         try {
@@ -699,7 +537,20 @@ class ErrorBurstDeduplicator
         } catch (Throwable) {
         }
 
-        return false;
+        return true;
+    }
+
+    protected static function cacheIncrement(string $key, int $amount, int $seconds): void
+    {
+        try {
+            if (! class_exists('\Illuminate\Support\Facades\Cache')) {
+                return;
+            }
+
+            Cache::add($key, 0, $seconds);
+            Cache::increment($key, max(1, $amount));
+        } catch (Throwable) {
+        }
     }
 
     protected static function cachePull(string $key): mixed

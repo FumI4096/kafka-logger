@@ -60,6 +60,34 @@ class ErrorBurstDeduplicatorTest extends TestCase
             ErrorBurstDeduplicator::fingerprint($payloadA, true),
             ErrorBurstDeduplicator::fingerprint($payloadDifferentLine, true),
         );
+
+        // Concurrent Postgres connection errors with differing SQL queries, emails, IPs, and quoted values share one signature
+        $sqlA = [
+            'application' => ['code' => 'CFNR_L', 'component' => 'DATABASE'],
+            'event' => [
+                'type' => 'DATABASE_QUERY_ERROR',
+                'level' => 'ERROR',
+                'message' => 'SQLSTATE[08006] [7] FATAL: sorry, too many clients already from 172.16.70.128:5432 for alice@up.edu.ph (Connection: pgsql, SQL: select * from "users" where "email" = \'alice@up.edu.ph\')',
+            ],
+            'error' => ['code' => '08006'],
+            'metadata' => ['file' => '/var/www/vendor/laravel/framework/Connection.php', 'line' => 825],
+        ];
+
+        $sqlB = [
+            'application' => ['code' => 'CFNR_L', 'component' => 'DATABASE'],
+            'event' => [
+                'type' => 'DATABASE_QUERY_ERROR',
+                'level' => 'ERROR',
+                'message' => 'SQLSTATE[08006] [7] FATAL: sorry, too many clients already from 10.0.0.45:5432 for bob@up.edu.ph (Connection: pgsql, SQL: select * from "sessions" where "id" = \'xyz987\')',
+            ],
+            'error' => ['code' => '08006'],
+            'metadata' => ['file' => '/var/www/vendor/laravel/framework/Connection.php', 'line' => 825],
+        ];
+
+        $this->assertSame(
+            ErrorBurstDeduplicator::fingerprint($sqlA, true),
+            ErrorBurstDeduplicator::fingerprint($sqlB, true),
+        );
     }
 
     public function test_twenty_identical_errors_within_1500ms_produce_single_instance_with_count(): void
@@ -101,6 +129,8 @@ class ErrorBurstDeduplicatorTest extends TestCase
 
         $this->assertCount(1, $flushed);
         $this->assertCount(1, $published);
+        $this->assertSame('ERROR', $published[0]['payload']['event']['level']);
+        $this->assertNotSame(ErrorBurstDeduplicator::COUNT_UPDATE_EVENT, $published[0]['payload']['event']['type']);
         $meta = $published[0]['payload']['metadata'];
         $this->assertSame(20, $meta['_occurrence_count']);
         $this->assertSame(19, $meta['_suppressed_duplicates']);
@@ -108,6 +138,42 @@ class ErrorBurstDeduplicatorTest extends TestCase
         $this->assertNotEmpty($meta['_dedup_fingerprint']);
         $this->assertNotEmpty($meta['_first_seen_at']);
         $this->assertNotEmpty($meta['_last_seen_at']);
+        $this->assertSame(0, ErrorBurstDeduplicator::flushExpiredCrossProcessCounts());
+        $this->assertCount(1, $published);
+    }
+
+    public function test_sliding_window_keeps_continuous_burst_as_one_error_instance(): void
+    {
+        $nowMs = 1_700_000_000_000;
+        ErrorBurstDeduplicator::setClock(static function () use (&$nowMs): int {
+            return $nowMs;
+        });
+
+        $published = [];
+        ErrorBurstDeduplicator::setPublisher(static function (array $topics, array $payload) use (&$published): void {
+            $published[] = $payload;
+        });
+
+        // 6 identical errors spaced 500ms apart (2500ms total span > 1500ms fixed, but gap is always 500ms < 1500ms)
+        for ($i = 1; $i <= 6; $i++) {
+            $nowMs += 500;
+            LoggerService::createEnterpriseLog(
+                appCode: 'CFNR_L',
+                eventType: 'DATABASE_QUERY_ERROR',
+                message: 'Postgres connection saturated',
+                level: LogLevel::CRITICAL,
+                environment: Environment::LOCAL,
+            );
+        }
+
+        // Still buffered as 1 continuous sliding burst
+        $this->assertCount(0, $published);
+        ErrorBurstDeduplicator::flush();
+
+        $this->assertCount(1, $published);
+        $this->assertSame('CRITICAL', $published[0]['event']['level']);
+        $this->assertSame(6, $published[0]['metadata']['_occurrence_count']);
+        $this->assertSame(5, $published[0]['metadata']['_suppressed_duplicates']);
     }
 
     public function test_distinct_errors_within_1500ms_each_emit_one_instance(): void

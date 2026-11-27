@@ -103,25 +103,28 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Error Burst Deduplication (1.5-Second Coalescing Window)
+    | Error Burst Deduplication (1.5-Second Sliding Coalescing Window)
     |--------------------------------------------------------------------------
     |
-    | Eliminates redundant error floods within a short sub-second/1.5s burst.
-    | Instead of emitting many duplicate error instances, only 1 error instance
-    | is produced per signature within window_ms (default 1500ms), annotated
-    | with _occurrence_count and _suppressed_duplicates.
+    | Eliminates redundant error floods within a short sub-second/1.5s sliding
+    | burst window (capped at max_burst_ms = 60s for continuous storms).
+    | Instead of emitting duplicate records or separate INFO control logs, only
+    | the ERROR/CRITICAL record itself is produced carrying _occurrence_count
+    | and _suppressed_duplicates.
     |
     | flush_mode:
-    |   'auto'                 - Uses 1.5s delayed FlushCoalescedErrorJob when async=true;
-    |                            otherwise coalesces in-request + atomic 1500ms cross-process
-    |                            gate with trailing count rollup to CLS.
-    |   'immediate_then_update'- Always emit #1 immediately & fold trailing cross-process counts.
-    |   'delayed_job'          - Always defer leader publish by window_ms via queue job.
+    |   'auto'        - Uses delayed FlushCoalescedErrorJob across processes when
+    |                   async=true; in sync mode collapses same-request bursts on
+    |                   the producer while CLS folds cross-process concurrency
+    |                   into a single ERROR/CRITICAL row.
+    |   'delayed_job' - Always defer leader publish by window_ms via queue job.
+    |   'sync'        - Always coalesce in-process and publish directly to CLS.
     |
     */
     'error_dedup' => [
         'enabled' => env('KAFKA_LOGGER_ERROR_DEDUP_ENABLED', true),
         'window_ms' => (int) env('KAFKA_LOGGER_ERROR_DEDUP_WINDOW_MS', 1500),
+        'max_burst_ms' => (int) env('KAFKA_LOGGER_ERROR_DEDUP_MAX_BURST_MS', 60000),
         'levels' => array_values(array_filter(array_map(
             static fn (string $lvl): string => strtoupper(trim($lvl)),
             explode(',', (string) env('KAFKA_LOGGER_ERROR_DEDUP_LEVELS', 'ERROR,CRITICAL'))

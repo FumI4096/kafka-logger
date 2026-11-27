@@ -15,7 +15,7 @@ use Mimon\KafkaLogger\Support\SafeTrace;
 
 class LoggerService
 {
-    public const PACKAGE_VERSION = '1.2.8';
+    public const PACKAGE_VERSION = '1.2.9';
 
     public const CIRCUIT_CACHE_KEY = 'mimon_kafka_logger:circuit_open';
 
