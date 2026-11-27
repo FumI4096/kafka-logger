@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Mimon\KafkaLogger\Enums\ComponentSubsystem;
 use Mimon\KafkaLogger\Enums\LogLevel;
 use Mimon\KafkaLogger\Services\LoggerService;
+use Mimon\KafkaLogger\Support\ErrorBurstDeduplicator;
 use Mimon\KafkaLogger\Support\PayloadSanitizer;
 use Mimon\KafkaLogger\Support\PulseUsageBuffer;
 use Mimon\KafkaLogger\Support\ServerVitalsCollector;
@@ -35,9 +36,10 @@ class PulseSlowRequestMiddleware
             } catch (Throwable) {
             }
 
-            // Piggyback server vitals + usage/cache rollup at most once per 60s during normal traffic
+            // Piggyback server vitals + usage/cache rollup + expired error burst count rollups
             ServerVitalsCollector::maybeEmitHeartbeat();
             PulseUsageBuffer::maybeFlush();
+            ErrorBurstDeduplicator::flushExpiredCrossProcessCounts();
         }
     }
 

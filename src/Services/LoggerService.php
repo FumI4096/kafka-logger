@@ -8,13 +8,14 @@ use Mimon\KafkaLogger\Enums\ComponentSubsystem;
 use Mimon\KafkaLogger\Enums\Environment;
 use Mimon\KafkaLogger\Enums\LogLevel;
 use Mimon\KafkaLogger\Jobs\SendKafkaLogJob;
+use Mimon\KafkaLogger\Support\ErrorBurstDeduplicator;
 use Mimon\KafkaLogger\Support\LogContext;
 use Mimon\KafkaLogger\Support\PayloadSanitizer;
 use Mimon\KafkaLogger\Support\SafeTrace;
 
 class LoggerService
 {
-    public const PACKAGE_VERSION = '1.2.7';
+    public const PACKAGE_VERSION = '1.2.8';
 
     public const CIRCUIT_CACHE_KEY = 'mimon_kafka_logger:circuit_open';
 
@@ -40,15 +41,77 @@ class LoggerService
         ?string $appName = null,
         ?string $traceId = null
     ): array {
-        $resolvedAppCode = $appCode ?? $appName ?? (string) PayloadSanitizer::config('kafka-logger.app_code', PayloadSanitizer::config('kafka-logger.app_name', 'HR_APP'));
-        $resolvedAppName = $appName ?? $appCode ?? $resolvedAppCode;
+        $targetTopics = static::resolveTargetTopics($topic);
+
+        $payload = static::buildEnterprisePayload(
+            appCode: $appCode,
+            eventType: $eventType,
+            message: $message,
+            level: $level,
+            component: $component,
+            topic: $targetTopics[0] ?? $topic,
+            userId: $userId,
+            userRole: $userRole,
+            metadata: $metadata,
+            exception: $exception,
+            environment: $environment,
+            appName: $appName,
+            traceId: $traceId,
+        );
+
+        if (empty($payload)) {
+            return [];
+        }
+
+        // Primary 1.5s burst coalescer for ERROR/CRITICAL events
+        $dedup = ErrorBurstDeduplicator::capture($payload, $targetTopics);
+        if ($dedup['handled']) {
+            return $dedup['payload'];
+        }
+
+        // Secondary 60s sustained-flood ceiling (when burst dedup is disabled or level bypassed)
+        if (static::shouldSuppressBySustainedRateLimit($payload)) {
+            return [];
+        }
+
+        static::publishToTopics($targetTopics, $payload);
+
+        return $payload;
+    }
+
+    /**
+     * Build and validate an enterprise CLS payload without publishing or deduplicating.
+     */
+    public static function buildEnterprisePayload(
+        ?string $appCode = null,
+        string $eventType = 'SYSTEM_EVENT',
+        string $message = '',
+        LogLevel|string $level = LogLevel::INFO,
+        ComponentSubsystem|string $component = ComponentSubsystem::APPLICATION_LOGIC,
+        ?string $topic = null,
+        ?string $userId = null,
+        ?string $userRole = null,
+        ?array $metadata = null,
+        ?\Throwable $exception = null,
+        Environment|string|null $environment = null,
+        ?string $appName = null,
+        ?string $traceId = null
+    ): array {
+        $resolvedAppCode = ($appCode !== null && $appCode !== '')
+            ? $appCode
+            : (($appName !== null && $appName !== '')
+                ? $appName
+                : (string) PayloadSanitizer::config('kafka-logger.app_code', PayloadSanitizer::config('kafka-logger.app_name', 'HR_APP')));
+        $resolvedAppName = ($appName !== null && $appName !== '') ? $appName : $resolvedAppCode;
         $logId = (string) Str::uuid();
         $traceId = $traceId ?: (LogContext::traceId() ?? static::resolveTraceId(static::requestHeader('x-trace-id')));
         $spanId = 'sp-' . Str::random(6);
 
-        $resolvedEnv = is_string($environment)
+        $resolvedEnv = is_string($environment) && $environment !== ''
             ? (Environment::tryFrom(strtoupper($environment)) ?? strtoupper($environment))
-            : ($environment ?? (Environment::tryFrom(strtoupper((string) PayloadSanitizer::config('kafka-logger.environment', 'LOCAL'))) ?? Environment::LOCAL));
+            : (($environment instanceof Environment)
+                ? $environment
+                : (Environment::tryFrom(strtoupper((string) PayloadSanitizer::config('kafka-logger.environment', 'LOCAL'))) ?? Environment::LOCAL));
 
         $resolvedLevel = is_string($level)
             ? (LogLevel::tryFrom(strtoupper($level)) ?? strtoupper($level))
@@ -144,9 +207,19 @@ class LoggerService
             }
         }
 
-        if (static::shouldSuppressByRateLimit($payload)) {
-            return [];
-        }
+        return $payload;
+    }
+
+    /**
+     * Publish an already-built enterprise payload to one or more Kafka topics.
+     *
+     * @param  array<int, string>  $targetTopics
+     * @param  array<string, mixed>  $payload
+     */
+    public static function publishToTopics(array $targetTopics, array $payload, bool $fromQueue = false): void
+    {
+        $traceId = (string) ($payload['trace']['trace_id'] ?? '');
+        $logId = (string) ($payload['log_id'] ?? '');
 
         foreach ($targetTopics as $targetTopic) {
             $topicPayload = $payload;
@@ -155,10 +228,8 @@ class LoggerService
             static::publish($targetTopic, $topicPayload, [
                 'x-trace-id' => $traceId,
                 'x-log-id' => $logId,
-            ]);
+            ], $fromQueue);
         }
-
-        return $payload;
     }
 
     /**
@@ -178,9 +249,18 @@ class LoggerService
     }
 
     /**
+     * Secondary sustained-flood ceiling: suppress repeated identical error logs after N occurrences
+     * within a rolling 60s window (runs behind the primary 1.5s ErrorBurstDeduplicator).
+     */
+    public static function shouldSuppressBySustainedRateLimit(array &$payload, ?string $explicitFingerprint = null): bool
+    {
+        return static::shouldSuppressByRateLimit($payload, $explicitFingerprint);
+    }
+
+    /**
      * Suppress repeated identical error logs after N occurrences within a rolling window.
      */
-    protected static function shouldSuppressByRateLimit(array &$payload): bool
+    protected static function shouldSuppressByRateLimit(array &$payload, ?string $explicitFingerprint = null): bool
     {
         $max = (int) PayloadSanitizer::config('kafka-logger.rate_limit_max', 5);
         $window = (int) PayloadSanitizer::config('kafka-logger.rate_limit_seconds', 60);
@@ -198,17 +278,7 @@ class LoggerService
             return false;
         }
 
-        $appCode = (string) ($payload['application']['code'] ?? '');
-        $eventType = (string) ($payload['event']['type'] ?? '');
-        $component = (string) ($payload['application']['component'] ?? '');
-        $errorCode = (string) ($payload['error']['code'] ?? '');
-        $normalizedMessage = substr(
-            (string) preg_replace('/\b\d+\b/', '#', (string) ($payload['event']['message'] ?? '')),
-            0,
-            200
-        );
-
-        $fingerprint = sha1("{$appCode}|{$level}|{$eventType}|{$component}|{$errorCode}|{$normalizedMessage}");
+        $fingerprint = $explicitFingerprint ?: ErrorBurstDeduplicator::fingerprint($payload);
         $windowKey = "kafka_logger:rl:{$fingerprint}";
         $suppressedKey = "kafka_logger:rl_suppressed:{$fingerprint}";
 
@@ -224,7 +294,8 @@ class LoggerService
             $suppressed = (int) static::cacheGet($suppressedKey, 0);
             if ($suppressed > 0) {
                 $payload['metadata'] = is_array($payload['metadata'] ?? null) ? $payload['metadata'] : [];
-                $payload['metadata']['_suppressed_duplicates'] = $suppressed;
+                $existingSuppressed = max(0, (int) ($payload['metadata']['_suppressed_duplicates'] ?? 0));
+                $payload['metadata']['_suppressed_duplicates'] = $existingSuppressed + $suppressed;
                 static::cacheForget($suppressedKey);
             }
 
@@ -236,7 +307,8 @@ class LoggerService
         static::cachePut($windowKey, $entry, $remaining);
 
         if ($entry['count'] > $max) {
-            $suppressed = (int) static::cacheGet($suppressedKey, 0) + 1;
+            $incomingOccurrences = max(1, (int) ($payload['metadata']['_occurrence_count'] ?? 1));
+            $suppressed = (int) static::cacheGet($suppressedKey, 0) + $incomingOccurrences;
             static::cachePut($suppressedKey, $suppressed, max($window * 5, 300));
 
             return true;

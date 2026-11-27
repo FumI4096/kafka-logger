@@ -16,9 +16,9 @@ use PHPUnit\Framework\TestCase;
 
 class PulseRecordersTest extends TestCase
 {
-    public function test_package_version_is_bumped_to_1_2_7(): void
+    public function test_package_version_is_bumped_to_1_2_8(): void
     {
-        $this->assertSame('1.2.7', LoggerService::PACKAGE_VERSION);
+        $this->assertSame('1.2.8', LoggerService::PACKAGE_VERSION);
     }
 
     public function test_server_vitals_collector_produces_schema_valid_heartbeat_payload(): void
@@ -32,7 +32,7 @@ class PulseRecordersTest extends TestCase
         $this->assertGreaterThanOrEqual(0, $vitals['memory_used_mb']);
         $this->assertGreaterThan(0, $vitals['memory_total_mb']);
         $this->assertSame(PHP_VERSION, $vitals['php_version']);
-        $this->assertSame('1.2.7', $vitals['logger_version']);
+        $this->assertSame('1.2.8', $vitals['logger_version']);
 
         $payload = LoggerService::createEnterpriseLog(
             appCode: 'CFNR_L',

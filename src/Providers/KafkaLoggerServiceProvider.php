@@ -28,6 +28,7 @@ use Mimon\KafkaLogger\Listeners\PulseJobListener;
 use Mimon\KafkaLogger\Listeners\PulseOutgoingRequestListener;
 use Mimon\KafkaLogger\Listeners\PulseSlowQueryListener;
 use Mimon\KafkaLogger\Services\KafkaLoggerService;
+use Mimon\KafkaLogger\Support\ErrorBurstDeduplicator;
 
 class KafkaLoggerServiceProvider extends ServiceProvider
 {
@@ -67,6 +68,10 @@ class KafkaLoggerServiceProvider extends ServiceProvider
             Event::listen(MessageLogged::class, [LogErrorEvents::class, 'handleMessageLogged']);
             Event::listen(JobFailed::class, [LogErrorEvents::class, 'handleJobFailed']);
         }
+
+        $this->app->terminating(static function (): void {
+            ErrorBurstDeduplicator::flush();
+        });
 
         if (config('kafka-logger.enabled', true) && config('kafka-logger.pulse.enabled', true)) {
             if (config('kafka-logger.pulse.slow_queries.enabled', true)) {
